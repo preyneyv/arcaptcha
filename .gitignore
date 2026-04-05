@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Frontend build output
+web/node_modules/
+web/dist/
+
+# ARC toolkit runtime downloads
+environment_files/
+recordings/
