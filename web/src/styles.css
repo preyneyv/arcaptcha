@@ -1,0 +1,219 @@
+:root {
+  color-scheme: dark;
+}
+
+@font-face {
+  font-family: "AV05 Logotype";
+  src:
+    url("./assets/fonts/av05-logotype.woff2") format("woff2"),
+    url("./assets/fonts/av05-logotype.otf") format("opentype");
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #0b0b0b;
+  font-family: "AV05 Logotype", sans-serif;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.app-shell {
+  background: #0b0b0b;
+  min-height: 100vh;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+}
+
+.app-foreground {
+  min-height: 100vh;
+  position: relative;
+  z-index: 2;
+}
+
+.conway-background {
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 0;
+}
+
+.conway-background-canvas {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.console-chin {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    #b96700 calc(100% - 25px)
+  );
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+  filter: drop-shadow(0 16px 40px rgba(0, 0, 0, 0.35));
+  image-rendering: pixelated;
+  left: 50%;
+  padding-bottom: 8px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%)
+    scale(max(1, round(down, min(calc(100vh / 296px), calc(100vw / 172px)))));
+  z-index: 3;
+}
+
+.console {
+  background: linear-gradient(
+    to bottom,
+    /* #faab17, */ #ff990b 50%,
+    #da8000 calc(100% - 14px)
+  );
+  border-radius: 14px;
+  padding: 2px;
+}
+
+.console-content {
+  background: #ff990b;
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.console-screen {
+  position: relative;
+}
+
+.console-screen-canvas {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  display: block;
+  height: 100px;
+  width: 100px;
+  border-radius: 1px;
+  overflow: hidden;
+  image-rendering: pixelated;
+  background-color: #f8f4ef;
+}
+
+.console-button {
+  outline: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: block;
+  position: relative;
+  width: 27px;
+  height: 27px;
+}
+.console-button:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.console-button img {
+  display: block;
+  width: 27px;
+  height: 29px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.console-action-row-1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.console-buttons {
+  display: flex;
+  gap: 3px;
+  height: 40px;
+}
+.console-buttons :nth-child(1) {
+  align-self: flex-end;
+}
+
+.console-dpad {
+  width: 50px;
+  height: 50px;
+  position: relative;
+  touch-action: none;
+}
+
+.console-dpad img {
+  position: absolute;
+  display: block;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.console-dpad {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: 50px;
+  height: 50px;
+}
+.console-dpad:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.console-mini-button {
+  outline: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: block;
+  position: relative;
+  width: 24px;
+  height: 10px;
+}
+.console-mini-button:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.console-mini-button img {
+  display: block;
+  width: 24px;
+  height: 10px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.console-mini-button-container {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+}
+
+.console-mini-button-label {
+  display: block;
+}
+
+.console-action-row-2 {
+  display: flex;
+  user-select: none;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.console-ui {
+  margin: 10px 0;
+}

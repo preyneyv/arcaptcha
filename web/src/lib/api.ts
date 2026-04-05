@@ -1,14 +1,15 @@
 import { getOrCreatePlayerId } from "./storage";
 
 export type ActionName =
-  | "RESET"
-  | "ACTION1"
-  | "ACTION2"
-  | "ACTION3"
-  | "ACTION4"
-  | "ACTION5"
-  | "ACTION6"
-  | "ACTION7";
+  | "RESET" // reset
+  | "ACTION1" // up
+  | "ACTION2" // down
+  | "ACTION3" // left
+  | "ACTION4" // right
+  | "ACTION5" // use
+  | "ACTION6" // click
+  | "ACTION7" // undo
+  | "HELP"; // help
 
 export interface DailyPuzzle {
   date: string;
