@@ -1,20 +1,20 @@
-<svg width="24" height="12" viewBox="0 0 24 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="30" height="14" viewBox="0 0 30 14" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_33_382)">
-<rect y="2" width="24" height="10" rx="5" fill="black" fill-opacity="0.25"/>
-<rect width="24" height="10" rx="5" fill="url(#paint0_radial_33_382)"/>
-<rect x="0.5" y="0.5" width="23" height="9" rx="4.5" stroke="url(#paint1_linear_33_382)" stroke-opacity="0.24"/>
+<rect y="2" width="30" height="12" rx="6" fill="black" fill-opacity="0.25"/>
+<rect width="30" height="12" rx="6" fill="url(#paint0_radial_33_382)"/>
+<rect x="1" y="1" width="28" height="10" rx="5" stroke="url(#paint1_linear_33_382)" stroke-opacity="0.24" stroke-width="2"/>
 </g>
 <defs>
-<radialGradient id="paint0_radial_33_382" cx="0" cy="0" r="1" gradientTransform="matrix(20.7932 8.1875 -23.5149 10.6428 4.95 1.8125)" gradientUnits="userSpaceOnUse">
+<radialGradient id="paint0_radial_33_382" cx="0" cy="0" r="1" gradientTransform="matrix(25.9914 9.825 -29.3936 12.7714 6.1875 2.175)" gradientUnits="userSpaceOnUse">
 <stop stop-color="#212121"/>
 <stop offset="1" stop-color="#3B3B3B"/>
 </radialGradient>
-<linearGradient id="paint1_linear_33_382" x1="20.55" y1="8.5625" x2="16.7334" y2="-0.597263" gradientUnits="userSpaceOnUse">
+<linearGradient id="paint1_linear_33_382" x1="25.6875" y1="10.275" x2="21.2392" y2="-0.845689" gradientUnits="userSpaceOnUse">
 <stop/>
 <stop offset="1" stop-opacity="0"/>
 </linearGradient>
 <clipPath id="clip0_33_382">
-<rect width="24" height="12" fill="white"/>
+<rect width="30" height="14" fill="white"/>
 </clipPath>
 </defs>
 </svg>

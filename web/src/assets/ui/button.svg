@@ -1,20 +1,20 @@
-<svg width="27" height="29" viewBox="0 0 27 29" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="36" height="38" viewBox="0 0 36 38" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_30_246)">
-<circle cx="13.5" cy="15.5" r="13.5" fill="black" fill-opacity="0.25"/>
-<circle cx="13.5" cy="13.5" r="13.5" fill="url(#paint0_radial_30_246)"/>
-<circle cx="13.5" cy="13.5" r="12.6667" stroke="url(#paint1_linear_30_246)" stroke-opacity="0.24" stroke-width="1.66667"/>
+<circle cx="18" cy="20" r="18" fill="black" fill-opacity="0.25"/>
+<circle cx="18" cy="18" r="18" fill="url(#paint0_radial_30_246)"/>
+<circle cx="18" cy="18" r="16.75" stroke="url(#paint1_linear_30_246)" stroke-opacity="0.24" stroke-width="2.5"/>
 </g>
 <defs>
-<radialGradient id="paint0_radial_30_246" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(5.56875 4.89375) rotate(50.8639) scale(22.1911)">
+<radialGradient id="paint0_radial_30_246" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(7.425 6.52501) rotate(50.8639) scale(29.5881)">
 <stop stop-color="#545454"/>
 <stop offset="1" stop-color="#3A3A3A"/>
 </radialGradient>
-<linearGradient id="paint1_linear_30_246" x1="23.1187" y1="23.1187" x2="8.60625" y2="8.60625" gradientUnits="userSpaceOnUse">
+<linearGradient id="paint1_linear_30_246" x1="30.825" y1="30.825" x2="11.475" y2="11.475" gradientUnits="userSpaceOnUse">
 <stop/>
 <stop offset="1" stop-opacity="0"/>
 </linearGradient>
 <clipPath id="clip0_30_246">
-<rect width="27" height="29" fill="white"/>
+<rect width="36" height="38" fill="white"/>
 </clipPath>
 </defs>
 </svg>

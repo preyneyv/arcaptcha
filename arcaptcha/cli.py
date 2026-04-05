@@ -64,3 +64,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     from waitress import serve
 
     serve(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()

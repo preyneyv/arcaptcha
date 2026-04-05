@@ -1,5 +1,17 @@
 import { getOrCreatePlayerId } from "./storage";
 
+export class ApiRequestError extends Error {
+  readonly code: string | null;
+  readonly status: number;
+
+  constructor(message: string, status: number, code: string | null = null) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export type ActionName =
   | "RESET" // reset
   | "ACTION1" // up
@@ -85,6 +97,10 @@ interface RawCommandFrame {
   frame: number[][][];
 }
 
+interface RawGameInfo {
+  game_id?: string;
+}
+
 function buildHeaders(initHeaders?: HeadersInit): Headers {
   const headers = new Headers(initHeaders);
   headers.set("Content-Type", "application/json");
@@ -95,7 +111,30 @@ function buildHeaders(initHeaders?: HeadersInit): Headers {
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed with ${response.status}`);
+
+    if (text) {
+      try {
+        const payload = JSON.parse(text) as {
+          error?: unknown;
+          message?: unknown;
+        };
+        const message =
+          typeof payload.message === "string" && payload.message
+            ? payload.message
+            : text;
+        const code = typeof payload.error === "string" ? payload.error : null;
+        throw new ApiRequestError(message, response.status, code);
+      } catch (error) {
+        if (error instanceof ApiRequestError) {
+          throw error;
+        }
+      }
+    }
+
+    throw new ApiRequestError(
+      text || `Request failed with ${response.status}`,
+      response.status,
+    );
   }
 
   return (await response.json()) as T;
@@ -151,6 +190,21 @@ export async function fetchDailyPuzzle(): Promise<DailyPuzzle> {
   return mapDailyPuzzle(await readJson<RawDailyPuzzle>(response));
 }
 
+export async function resolveGameId(gameId: string): Promise<string> {
+  if (!gameId || gameId.includes("-")) {
+    return gameId;
+  }
+
+  const response = await fetch(`/api/games/${encodeURIComponent(gameId)}`, {
+    headers: buildHeaders(),
+  });
+  const payload = await readJson<RawGameInfo>(response);
+
+  return typeof payload.game_id === "string" && payload.game_id
+    ? payload.game_id
+    : gameId;
+}
+
 export async function openScorecard(): Promise<{ cardId: string }> {
   const response = await fetch("/api/scorecard/open", {
     method: "POST",
@@ -191,17 +245,18 @@ export async function openPlaySession(gameId: string): Promise<{
   session: PlaySession;
   frame: CommandFrame;
 }> {
+  const resolvedGameId = await resolveGameId(gameId);
   const scorecard = await openScorecard();
   const frame = await sendAction("RESET", {
     cardId: scorecard.cardId,
-    gameId,
+    gameId: resolvedGameId,
     guid: null,
   });
 
   return {
     session: {
       cardId: scorecard.cardId,
-      gameId: frame.gameId,
+      gameId: frame.gameId || resolvedGameId,
       guid: frame.guid,
     },
     frame,
