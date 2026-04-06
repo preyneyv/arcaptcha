@@ -16,8 +16,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY arcaptcha ./arcaptcha
-COPY environment_files ./environment_files
-COPY web ./web
+# COPY environment_files ./environment_files
+# COPY web ./web
 
 WORKDIR /app/arcaptcha
 
