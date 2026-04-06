@@ -6,11 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Sequence
 
+from app import create_app
 from arc_agi import Arcade
-
-from .app import create_app
-from .catalog import GameCatalog
-from .config import AppConfig
+from catalog import GameCatalog
+from config import AppConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--debug", action="store_true")
 
     subparsers.add_parser("daily", help="print the currently scheduled daily puzzle")
+    subparsers.add_parser("season", help="print the current season schedule")
     return parser
 
 
@@ -35,7 +35,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     config = AppConfig.from_env()
 
-    if command == "daily":
+    if command in {"daily", "season"}:
         arcade = Arcade(
             operation_mode=config.operation_mode,
             environments_dir=str(config.environments_dir),
@@ -57,17 +57,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
 
         catalog = GameCatalog.load(config.catalog_path)
-        now = datetime.now(timezone.utc)
-        scheduled = catalog.current(now, config.season_start)
-        environment = catalog.environment_index(environments).get(
-            scheduled.entry.game_id
-        )
-        print(
-            json.dumps(
-                scheduled.to_payload(environment),
-                indent=2,
-            )
-        )
+        environment_index = catalog.environment_index(environments)
+
+        if command == "daily":
+            now = datetime.now(timezone.utc)
+            scheduled = catalog.current(now, config.season_start)
+            environment = environment_index.get(scheduled.entry.game_id)
+            payload = scheduled.to_payload(environment)
+        else:
+            payload = catalog.season_payload(config.season_start, environment_index)
+
+        print(json.dumps(payload, indent=2))
         return
 
     host = args.host or config.host

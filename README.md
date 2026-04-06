@@ -27,6 +27,8 @@ uv run arcaptcha serve --debug
 
 The backend defaults to `http://127.0.0.1:8000`.
 
+API responses allow CORS from `https://arcaptcha.io` by default. Override the allowlist with `ARCAPTCHA_CORS_ORIGINS` as a comma-separated list when needed.
+
 ### Frontend
 
 Install the web dependencies and start the Vite dev server:
@@ -45,6 +47,12 @@ Print the currently scheduled puzzle:
 
 ```bash
 uv run arcaptcha daily
+```
+
+Print the full season schedule as a single JSON document:
+
+```bash
+uv run arcaptcha season
 ```
 
 Build the frontend for the Flask app to serve:

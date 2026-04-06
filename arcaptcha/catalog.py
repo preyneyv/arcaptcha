@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from arc_agi import EnvironmentInfo
 
@@ -162,6 +162,38 @@ class GameCatalog:
             day_index=position + 1,
             entry=self.entries[position],
         )
+
+    def season_entries(self, season_start: date) -> tuple[ScheduledEntry, ...]:
+        if not self.entries:
+            raise ValueError("catalog must contain at least one game")
+
+        return tuple(
+            self.for_date(season_start + timedelta(days=offset), season_start)
+            for offset in range(len(self.entries))
+        )
+
+    def season_payload(
+        self,
+        season_start: date,
+        environment_index: Mapping[str, EnvironmentInfo],
+    ) -> dict[str, Any]:
+        scheduled_entries = self.season_entries(season_start)
+        payloads: list[dict[str, Any]] = []
+
+        for scheduled in scheduled_entries:
+            payload = scheduled.to_payload(
+                environment_index.get(scheduled.entry.game_id),
+            )
+            payload["day_index"] = scheduled.day_index
+            payloads.append(payload)
+
+        return {
+            "season_name": self.season_name,
+            "season_start": season_start.isoformat(),
+            "season_end": scheduled_entries[-1].scheduled_date.isoformat(),
+            "day_count": len(scheduled_entries),
+            "days": payloads,
+        }
 
     def archive(
         self,

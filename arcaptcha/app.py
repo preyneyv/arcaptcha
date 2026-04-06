@@ -6,12 +6,14 @@ from pathlib import Path
 
 from arc_agi import Arcade, EnvironmentInfo
 from arc_agi.server import create_app as create_arcade_app
-from flask import Flask, Response, jsonify, send_from_directory
-
-from .catalog import GameCatalog
-from .config import AppConfig
+from catalog import GameCatalog
+from config import AppConfig
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 LOGGER = logging.getLogger(__name__)
+
+ALLOWED_CORS_HEADERS = "Content-Type, X-API-Key"
+ALLOWED_CORS_METHODS = "GET, POST, OPTIONS"
 
 
 def create_app(config: AppConfig | None = None) -> Flask:
@@ -54,9 +56,32 @@ def create_app(config: AppConfig | None = None) -> Flask:
         "environment_index": environment_index,
     }
 
+    _register_cors(app, config)
     _register_api_routes(app, catalog, config, environment_index)
     _register_frontend_routes(app, config)
     return app
+
+
+def _register_cors(app: Flask, config: AppConfig) -> None:
+    allowed_origins = set(config.cors_allowed_origins)
+    if config.frontend_dev_url:
+        allowed_origins.add(config.frontend_dev_url.rstrip("/"))
+
+    @app.after_request
+    def add_cors_headers(response: Response) -> Response:
+        if not request.path.startswith("/api/"):
+            return response
+
+        origin = request.headers.get("Origin", "").rstrip("/")
+        if origin not in allowed_origins:
+            return response
+
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = ALLOWED_CORS_HEADERS
+        response.headers["Access-Control-Allow-Methods"] = ALLOWED_CORS_METHODS
+        response.headers["Access-Control-Max-Age"] = "600"
+        response.vary.add("Origin")
+        return response
 
 
 def _register_api_routes(

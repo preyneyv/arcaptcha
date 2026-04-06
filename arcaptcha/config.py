@@ -10,6 +10,10 @@ from arc_agi import OperationMode
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _normalize_origin(raw: str) -> str:
+    return raw.strip().rstrip("/")
+
+
 def _read_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -51,12 +55,26 @@ def _read_operation_mode(name: str, default: OperationMode) -> OperationMode:
     return default
 
 
+def _read_origins(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    origins = tuple(
+        origin
+        for origin in (_normalize_origin(value) for value in raw.split(","))
+        if origin
+    )
+    return origins or default
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     project_root: Path
     catalog_path: Path
     frontend_dist_dir: Path
     frontend_dev_url: str | None
+    cors_allowed_origins: tuple[str, ...]
     operation_mode: OperationMode
     season_start: date
     host: str
@@ -81,6 +99,10 @@ class AppConfig:
             catalog_path=root / "arcaptcha" / "content" / "games.json",
             frontend_dist_dir=root / "web" / "dist",
             frontend_dev_url=os.getenv("ARCAPTCHA_FRONTEND_DEV_URL"),
+            cors_allowed_origins=_read_origins(
+                "ARCAPTCHA_CORS_ORIGINS",
+                ("https://arcaptcha.io",),
+            ),
             operation_mode=_read_operation_mode(
                 "ARCAPTCHA_OPERATION_MODE",
                 OperationMode.NORMAL,
