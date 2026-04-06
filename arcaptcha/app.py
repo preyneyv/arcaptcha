@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from arc_agi import Arcade, EnvironmentInfo
+from arc_agi.api import RestAPI
 from arc_agi.server import create_app as create_arcade_app
 from catalog import GameCatalog
 from config import AppConfig
@@ -14,6 +16,8 @@ LOGGER = logging.getLogger(__name__)
 
 ALLOWED_CORS_HEADERS = "Content-Type, X-API-Key"
 ALLOWED_CORS_METHODS = "GET, POST, OPTIONS"
+
+_cleanup_thread_lock = threading.Lock()
 
 
 def create_app(config: AppConfig | None = None) -> Flask:
@@ -43,7 +47,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
     catalog = GameCatalog.load(config.catalog_path)
     environment_index = catalog.environment_index(environments)
 
-    app, _ = create_arcade_app(
+    app, api = create_arcade_app(
         arcade,
         save_all_recordings=False,
         include_frame_data=True,
@@ -53,13 +57,39 @@ def create_app(config: AppConfig | None = None) -> Flask:
         "catalog": catalog,
         "config": config,
         "arcade": arcade,
+        "api": api,
+        "cleanup_thread": None,
         "environment_index": environment_index,
     }
 
+    _register_cleanup_thread(app, api)
     _register_cors(app, config)
     _register_api_routes(app, catalog, config, environment_index)
     _register_frontend_routes(app, config)
     return app
+
+
+def _register_cleanup_thread(app: Flask, api: RestAPI) -> None:
+    def ensure_cleanup_thread() -> None:
+        with _cleanup_thread_lock:
+            extension_state = app.extensions["arcaptcha"]
+            cleaner = extension_state.get("cleanup_thread")
+            if cleaner is not None and cleaner.is_alive():
+                return
+
+            cleaner = threading.Thread(
+                target=api.scorecard_cleanup_loop,
+                name="arcaptcha-scorecard-cleaner",
+                daemon=True,
+            )
+            extension_state["cleanup_thread"] = cleaner
+            cleaner.start()
+
+    ensure_cleanup_thread()
+
+    @app.before_request
+    def start_cleanup_thread() -> None:
+        ensure_cleanup_thread()
 
 
 def _register_cors(app: Flask, config: AppConfig) -> None:
