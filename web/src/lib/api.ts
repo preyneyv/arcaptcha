@@ -229,7 +229,7 @@ export async function sendAction(
     ...extraData,
   };
 
-  if (action !== "RESET" && session.guid) {
+  if (session.guid) {
     payload.guid = session.guid;
   }
 
