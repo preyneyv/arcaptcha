@@ -1572,6 +1572,8 @@ export class Firmware {
         return;
       }
 
+      const nextCountedActions = activeSession.countedActions + 1;
+
       const nextSession: RuntimeSession = {
         ...activeSession,
         gameId: preferSessionGameId(activeSession.gameId, nextFrame.gameId),
@@ -1580,20 +1582,14 @@ export class Firmware {
         frames: nextFrame.frame,
         grid: nextFrame.grid,
         availableActions: nextFrame.availableActions,
-        countedActions:
-          action === "RESET" ? 1 : activeSession.countedActions + 1,
+        countedActions: nextCountedActions,
         levelsCompleted: nextFrame.levelsCompleted,
         winLevels: nextFrame.winLevels,
-        ...(action === "RESET"
-          ? {
-              levelActionCounts: [],
-              currentLevelStartActionCount: 1,
-            }
-          : deriveLevelActionCounts(
-              activeSession,
-              activeSession.countedActions + 1,
-              nextFrame.levelsCompleted,
-            )),
+        ...deriveLevelActionCounts(
+          activeSession,
+          nextCountedActions,
+          nextFrame.levelsCompleted,
+        ),
       };
       this.syncSession(nextSession);
       this.state.error = null;

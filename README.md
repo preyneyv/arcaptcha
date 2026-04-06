@@ -1,37 +1,48 @@
-## Arcaptcha
+## ARCaptcha
 
-Arcaptcha is a daily browser microgame built on top of ARC-AGI-3 public environments.
-The player gets a mystery grid, no instructions, and a centered handheld-console UI. The current implementation is a vertical slice:
+![ARCaptcha](./web/public/sm_image.png)
 
-- A Python backend that extends the ARC-AGI toolkit REST server.
-- A daily catalog that rotates the official public ARC-AGI-3 game pool in replay seasons.
-- A React frontend with a canvas-rendered grid, handheld-style controls, and anonymous local session identity.
+ARCaptcha is a daily browser puzzle built on top of [ARC-AGI-3](https://arcprize.org/arc-agi/3). The repo has two main parts:
 
-## Stack
+- A Python backend that mounts the ARC toolkit REST API, serves the current daily puzzle, and runs scorecard cleanup in-process.
+- A React and Vite frontend that renders the handheld console UI and stores anonymous player identity plus best-effort run state in `localStorage`.
+
+> [!WARNING]
+> Parts of this codebase are pretty scuffed and need some tidying. At the moment, my goal is just to get a v1 out there.
+
+## Repo Layout
+
+- `arcaptcha/` backend Flask app, CLI, config, catalog logic, and an alternate fuller Dockerfile.
+- `web/` frontend source, Vite config, and built static assets.
+- `Dockerfile` root-level container build for a minimal API image.
+
+## Requirements
 
 - Python 3.12
-- `arc-agi` toolkit for environment loading and action execution
-- Flask via the toolkit server app factory
-- React + Vite for the browser UI
+- Node.js 20+
+- `uv`
+- `npm`
 
-## Run locally
+## Local Development
 
-### Backend
-
-Install Python dependencies and start the API server:
+### Python Dependencies
 
 ```bash
 uv sync
-uv run arcaptcha serve --debug
+```
+
+### Backend
+
+The current backend entrypoints use module-local imports, so run backend commands from the `arcaptcha/` directory.
+
+```bash
+cd arcaptcha
+uv run python cli.py serve --debug --host 127.0.0.1 --port 8000
 ```
 
 The backend defaults to `http://127.0.0.1:8000`.
 
-API responses allow CORS from `https://arcaptcha.io` by default. Override the allowlist with `ARCAPTCHA_CORS_ORIGINS` as a comma-separated list when needed.
-
 ### Frontend
-
-Install the web dependencies and start the Vite dev server:
 
 ```bash
 cd web
@@ -39,43 +50,51 @@ npm install
 npm run dev
 ```
 
-The frontend defaults to `http://127.0.0.1:5173` and proxies `/api` to the backend.
+The frontend defaults to `http://127.0.0.1:5173` and proxies relative `/api` requests to `http://127.0.0.1:8000`.
 
-Set `VITE_API_ROOT` at build or dev time when the browser should call a different API origin, for example `VITE_API_ROOT=https://api.arcaptcha.io npm run dev`.
-
-## Useful commands
+## Utility Commands
 
 Print the currently scheduled puzzle:
 
 ```bash
-uv run arcaptcha daily
+cd arcaptcha
+uv run python cli.py daily
 ```
 
-Print the full season schedule as a single JSON document:
+Print the current season as one JSON document:
 
 ```bash
-uv run arcaptcha season
+cd arcaptcha
+uv run python cli.py season
 ```
 
-Build the frontend for the Flask app to serve:
+Build the frontend for Flask to serve:
 
 ```bash
 cd web
 npm run build
 ```
 
-After the frontend build finishes, the backend serves `web/dist` at `/`.
+After a successful frontend build, the backend serves `web/dist` at `/`.
 
-## Runtime behavior
+## Environment Variables
 
-- The daily schedule is anchored to `2026-04-04` by default.
-- Rotation uses the 25 public ARC-AGI-3 demo environments listed in `arcaptcha/content/games.json`.
-- When the pool wraps, the schedule marks the day as replay-season content instead of pretending it is novel.
-- The browser keeps only an anonymous API key in `localStorage` for stable local sessions.
-- The exact reference action count is hidden until the post-rollover reveal window.
+- `VITE_API_ROOT` changes the frontend API origin at build or dev time. If unset, the frontend uses relative `/api` URLs.
 
-## Important caveats
+Example frontend override:
 
-- This repo currently uses the official public ARC-AGI-3 environment pool directly.
-- The reference action count still falls back to toolkit baseline actions unless a curated value is added to `arcaptcha/content/games.json`.
-- No accounts, monetization, or leaderboard logic are included in this version.
+```bash
+cd web
+VITE_API_ROOT=http://localhost:5000 npm run dev
+```
+
+## Docker
+
+### Minimal API Image
+
+The root [Dockerfile](Dockerfile) builds a minimal API image and starts the backend with Waitress on port `5000`.
+
+```bash
+docker build -t arcaptcha/api .
+docker run --rm -p 5000:5000 arcaptcha/api
+```

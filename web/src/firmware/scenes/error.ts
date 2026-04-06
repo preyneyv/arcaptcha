@@ -95,8 +95,14 @@ export class ErrorSceneModule implements SceneModule {
       );
     });
 
-    drawText(framebuffer, 6, 112, "HELP", UI_COLORS.textMuted, "large");
-    drawText(framebuffer, 6, 121, "RESET", UI_COLORS.textMuted, "large");
+    drawText(
+      framebuffer,
+      6,
+      120,
+      "TRY REFRESHING",
+      UI_COLORS.textMuted,
+      "large",
+    );
 
     return {
       framebuffer,
