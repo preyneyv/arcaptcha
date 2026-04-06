@@ -1,5 +1,5 @@
 import type { ActionName } from "../../lib/api";
-import { drawText, measureText } from "../font";
+import { drawText, drawTextRight, measureText } from "../font";
 import {
   blitArcGrid,
   clearFramebuffer,
@@ -9,7 +9,7 @@ import {
   GAMEPLAY_HEIGHT,
   GAMEPLAY_SCALE,
   SCREEN_WIDTH,
-  setPixel,
+  strokeRect,
 } from "../framebuffer";
 import {
   getLevelScorePercent,
@@ -28,35 +28,8 @@ const STATUS_BAND_COLORS: Record<PostGameBand, number> = {
   yellow: 11,
   green: 14,
   blue: 9,
-  neutral: 10,
+  neutral: 3,
 };
-
-const FILLED_CIRCLE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [0, -2],
-  [-1, -1],
-  [0, -1],
-  [1, -1],
-  [-2, 0],
-  [-1, 0],
-  [0, 0],
-  [1, 0],
-  [2, 0],
-  [-1, 1],
-  [0, 1],
-  [1, 1],
-  [0, 2],
-];
-
-const HOLLOW_CIRCLE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [0, -2],
-  [-1, -1],
-  [1, -1],
-  [-2, 0],
-  [2, 0],
-  [-1, 1],
-  [1, 1],
-  [0, 2],
-];
 
 function createControlState(defaultValue: boolean = false): ControlState {
   return {
@@ -72,41 +45,16 @@ function createControlState(defaultValue: boolean = false): ControlState {
   };
 }
 
-function drawTextRight(
-  framebuffer: ReturnType<typeof createFramebuffer>,
-  right: number,
-  y: number,
-  text: string,
-  color: number,
-): void {
-  drawText(
-    framebuffer,
-    right - measureText(text, "small"),
-    y,
-    text,
-    color,
-    "small",
-  );
-}
-
-function drawStatusCircle(
-  framebuffer: ReturnType<typeof createFramebuffer>,
-  centerX: number,
-  centerY: number,
-  color: number,
-  filled: boolean,
-): void {
-  const offsets = filled ? FILLED_CIRCLE_OFFSETS : HOLLOW_CIRCLE_OFFSETS;
-  for (const [offsetX, offsetY] of offsets) {
-    setPixel(framebuffer, centerX + offsetX, centerY + offsetY, color);
-  }
-}
-
-function drawPerformanceCircles(
+function drawPerformanceHeatmap(
   framebuffer: ReturnType<typeof createFramebuffer>,
   model: FirmwareModel,
   progress: string,
 ): void {
+  const tileSize = 7;
+  const tileGap = 2;
+  const startX = 2;
+  const y = GAMEPLAY_HEIGHT + 3;
+
   const goal = Math.max(
     1,
     model.session?.winLevels || model.session?.levelsCompleted || 1,
@@ -115,50 +63,34 @@ function drawPerformanceCircles(
     0,
     Math.min(model.session?.levelsCompleted ?? 0, goal),
   );
-  const progressWidth = measureText(progress, "small");
-  const left = 4;
-  const right = SCREEN_WIDTH - progressWidth - 8;
-  const centerY = 133;
+
+  const progressWidth = measureText(progress);
+  const maxHeatmapWidth = SCREEN_WIDTH - progressWidth - 8 - startX;
   const levelActionCounts = model.session?.levelActionCounts ?? [];
   const baselineActionsByLevel = model.daily?.baselineActions ?? [];
-  const pendingColor = UI_COLORS.border;
+  const pendingColor = STATUS_BAND_COLORS.neutral;
 
-  if (right <= left) {
-    return;
-  }
-
-  if (goal === 1) {
-    const scorePercent = getLevelScorePercent(
-      levelActionCounts[0],
-      baselineActionsByLevel[0],
-    );
-    const completedColor = STATUS_BAND_COLORS[getPerformanceBand(scorePercent)];
-    drawStatusCircle(
-      framebuffer,
-      Math.floor((left + right) / 2),
-      centerY,
-      completed > 0 ? completedColor : pendingColor,
-      completed > 0,
-    );
+  const totalWidth = goal * tileSize + Math.max(0, goal - 1) * tileGap;
+  if (maxHeatmapWidth <= 0 || totalWidth > maxHeatmapWidth) {
     return;
   }
 
   for (let index = 0; index < goal; index += 1) {
-    const centerX =
-      left + Math.floor((index * (right - left)) / Math.max(1, goal - 1));
+    const x = startX + index * (tileSize + tileGap);
     const isComplete = index < completed;
     const scorePercent = getLevelScorePercent(
       levelActionCounts[index],
       baselineActionsByLevel[index],
     );
-    const completedColor = STATUS_BAND_COLORS[getPerformanceBand(scorePercent)];
-    drawStatusCircle(
-      framebuffer,
-      centerX,
-      centerY,
-      isComplete ? completedColor : pendingColor,
-      isComplete,
-    );
+    const color = isComplete
+      ? STATUS_BAND_COLORS[getPerformanceBand(scorePercent)]
+      : pendingColor;
+
+    if (isComplete) {
+      fillRect(framebuffer, x, y, tileSize, tileSize, color);
+    } else {
+      strokeRect(framebuffer, x, y, tileSize, tileSize, color);
+    }
   }
 }
 
@@ -304,15 +236,16 @@ export class PlaySceneModule implements SceneModule {
     );
     const goal =
       model.session?.winLevels || model.session?.levelsCompleted || 1;
-    const progress = `${model.session?.levelsCompleted ?? 0}/${goal}`;
-    drawPerformanceCircles(framebuffer, model, progress);
+    const progress = `${model.session?.countedActions}`;
     drawTextRight(
       framebuffer,
       SCREEN_WIDTH - 2,
-      131,
+      GAMEPLAY_HEIGHT + 4,
       progress,
-      UI_COLORS.textInverse,
+      UI_COLORS.text,
+      "small",
     );
+    drawPerformanceHeatmap(framebuffer, model, progress);
 
     return {
       framebuffer,

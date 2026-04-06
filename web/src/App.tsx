@@ -48,6 +48,15 @@ const KEY_TO_ACTION: Record<string, ActionName> = {
   Escape: "HELP",
 };
 
+const REPEATABLE_ACTIONS = new Set<ActionName>([
+  "ACTION1",
+  "ACTION2",
+  "ACTION3",
+  "ACTION4",
+  "ACTION5",
+  "ACTION7",
+]);
+
 const DEFAULT_CONSOLE_PRESSED_STATE: ConsolePressedState = {
   dpadDir: null,
   diamond: false,
@@ -163,12 +172,15 @@ export default function App() {
       return;
     }
 
-    if (event.repeat) {
+    if (event.repeat && !REPEATABLE_ACTIONS.has(mappedAction)) {
       return;
     }
 
-    pressedKeysRef.current.add(normalizedKey);
-    setConsolePressed(deriveConsolePressedState(pressedKeysRef.current));
+    if (!pressedKeysRef.current.has(normalizedKey)) {
+      pressedKeysRef.current.add(normalizedKey);
+      setConsolePressed(deriveConsolePressedState(pressedKeysRef.current));
+    }
+
     void firmware.dispatchAction(mappedAction);
   });
 

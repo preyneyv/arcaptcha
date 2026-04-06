@@ -38,6 +38,49 @@ const DIR_TO_ACTION: Record<NonNullable<ConsoleDirection>, ActionName> = {
   right: "ACTION4",
 };
 
+const HOLD_REPEAT_INITIAL_DELAY_MS = 150;
+const HOLD_REPEAT_INTERVAL_MS = 90;
+
+function useHoldRepeater(onRepeat: () => void): {
+  start: () => void;
+  stop: () => void;
+} {
+  const onRepeatRef = useRef(onRepeat);
+  const delayTimeoutRef = useRef<number | null>(null);
+  const repeatIntervalRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onRepeatRef.current = onRepeat;
+  }, [onRepeat]);
+
+  const stop = useCallback(() => {
+    if (delayTimeoutRef.current !== null) {
+      window.clearTimeout(delayTimeoutRef.current);
+      delayTimeoutRef.current = null;
+    }
+
+    if (repeatIntervalRef.current !== null) {
+      window.clearInterval(repeatIntervalRef.current);
+      repeatIntervalRef.current = null;
+    }
+  }, []);
+
+  const start = useCallback(() => {
+    stop();
+
+    delayTimeoutRef.current = window.setTimeout(() => {
+      onRepeatRef.current();
+      repeatIntervalRef.current = window.setInterval(() => {
+        onRepeatRef.current();
+      }, HOLD_REPEAT_INTERVAL_MS);
+    }, HOLD_REPEAT_INITIAL_DELAY_MS);
+  }, [stop]);
+
+  useEffect(() => stop, [stop]);
+
+  return { start, stop };
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -165,6 +208,14 @@ function ConsoleButton({
   pressed: boolean;
   setPressed: (pressed: boolean) => void;
 }) {
+  const { start: startRepeating, stop: stopRepeating } =
+    useHoldRepeater(onTrigger);
+
+  const release = useCallback(() => {
+    setPressed(false);
+    stopRepeating();
+  }, [setPressed, stopRepeating]);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (inputLocked) {
       return;
@@ -173,6 +224,7 @@ function ConsoleButton({
     e.currentTarget.setPointerCapture(e.pointerId);
     setPressed(true);
     onTrigger();
+    startRepeating();
   };
 
   return (
@@ -182,8 +234,10 @@ function ConsoleButton({
       })}
       disabled={disabled}
       onPointerDown={handlePointerDown}
-      onPointerUp={() => setPressed(false)}
-      onPointerCancel={() => setPressed(false)}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onPointerLeave={release}
+      onLostPointerCapture={release}
     >
       <img
         src={pressed ? buttonPressed : buttonBase}
@@ -237,6 +291,49 @@ function ConsoleDPad({
   }, []);
 
   const dragging = useRef(false);
+  const activePointerDirRef = useRef<Dir>(null);
+  const repeatDirRef = useRef<NonNullable<Dir> | null>(null);
+
+  const { start: startRepeating, stop: stopRepeating } = useHoldRepeater(() => {
+    const repeatDir = repeatDirRef.current;
+    if (!repeatDir) {
+      return;
+    }
+
+    onTrigger(repeatDir);
+  });
+
+  const applyDirection = useCallback(
+    (nextDir: Dir, triggerImmediately: boolean) => {
+      const resolvedDir =
+        nextDir && enabledDirections[nextDir] ? nextDir : null;
+      if (activePointerDirRef.current === resolvedDir) {
+        return;
+      }
+
+      activePointerDirRef.current = resolvedDir;
+      onDirChange(resolvedDir);
+
+      repeatDirRef.current = resolvedDir;
+      stopRepeating();
+
+      if (resolvedDir) {
+        if (triggerImmediately) {
+          onTrigger(resolvedDir);
+        }
+        startRepeating();
+      }
+    },
+    [enabledDirections, onDirChange, onTrigger, startRepeating, stopRepeating],
+  );
+
+  const stop = useCallback(() => {
+    dragging.current = false;
+    activePointerDirRef.current = null;
+    repeatDirRef.current = null;
+    onDirChange(null);
+    stopRepeating();
+  }, [onDirChange, stopRepeating]);
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -247,35 +344,34 @@ function ConsoleDPad({
       e.currentTarget.setPointerCapture(e.pointerId);
       dragging.current = true;
       const nextDir = getDir(e.currentTarget, e.clientX, e.clientY);
-      if (nextDir && enabledDirections[nextDir]) {
-        onDirChange(nextDir);
-        onTrigger(nextDir);
-        return;
-      }
-
-      onDirChange(null);
+      applyDirection(nextDir, true);
     },
-    [enabledDirections, getDir, inputLocked, onDirChange, onTrigger],
+    [applyDirection, getDir, inputLocked],
   );
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLButtonElement>) => {
       if (inputLocked || !dragging.current) return;
       const nextDir = getDir(e.currentTarget, e.clientX, e.clientY);
-      if (nextDir && enabledDirections[nextDir]) {
-        onDirChange(nextDir);
-        return;
-      }
-
-      onDirChange(null);
+      applyDirection(nextDir, true);
     },
-    [enabledDirections, getDir, inputLocked, onDirChange],
+    [applyDirection, getDir, inputLocked],
   );
 
-  const stop = useCallback(() => {
-    dragging.current = false;
-    onDirChange(null);
-  }, [onDirChange]);
+  useEffect(() => {
+    if (inputLocked) {
+      stop();
+    }
+  }, [inputLocked, stop]);
+
+  useEffect(() => {
+    const activeDir = activePointerDirRef.current;
+    if (!activeDir || enabledDirections[activeDir]) {
+      return;
+    }
+
+    stop();
+  }, [enabledDirections, stop]);
 
   return (
     <button
@@ -285,6 +381,8 @@ function ConsoleDPad({
       onPointerMove={handlePointerMove}
       onPointerUp={stop}
       onPointerCancel={stop}
+      onPointerLeave={stop}
+      onLostPointerCapture={stop}
       disabled={disabled}
     >
       <img src={dpad} className="console-dpad-base" alt="" draggable={false} />
