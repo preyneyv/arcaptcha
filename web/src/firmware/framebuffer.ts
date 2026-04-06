@@ -96,6 +96,9 @@ export function blitSprite(
     for (let x = 0; x < columns; x += 1) {
       const sourceColor = row[x];
       const color = remap[sourceColor] ?? sourceColor;
+      if (color === 0) {
+        continue;
+      }
       framebuffer[(offsetY + y) * SCREEN_WIDTH + (offsetX + x)] = color;
     }
   }

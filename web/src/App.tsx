@@ -44,6 +44,8 @@ const KEY_TO_ACTION: Record<string, ActionName> = {
   ArrowRight: "ACTION4",
   j: "ACTION5",
   " ": "ACTION5",
+  Enter: "ACTION5",
+  f: "ACTION5",
   z: "ACTION7",
   u: "ACTION7",
   r: "RESET",

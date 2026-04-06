@@ -1,5 +1,11 @@
 import type { ActionName, DailyPuzzle } from "../lib/api";
-import { drawText, getLineHeight, measureText, wrapText } from "./font";
+import {
+  drawText,
+  FontSize,
+  getLineHeight,
+  measureText,
+  wrapText,
+} from "./font";
 import {
   blitArcGrid,
   blitSprite,
@@ -15,9 +21,20 @@ import {
   type Framebuffer,
 } from "./framebuffer";
 import { UI_COLORS } from "./palette";
-import { SPIRTE_PLAY, SPRITE_CONTROLS_DISABLED, SPRITE_LOGO } from "./sprites";
+import {
+  SPIRTE_PLAY,
+  SPRITE_CONTROLS_CIRCLE,
+  SPRITE_CONTROLS_DIAMOND,
+  SPRITE_CONTROLS_DISABLED,
+  SPRITE_CONTROLS_DPAD_DOWN,
+  SPRITE_CONTROLS_DPAD_LEFT,
+  SPRITE_CONTROLS_DPAD_RIGHT,
+  SPRITE_CONTROLS_DPAD_UP,
+  SPRITE_CONTROLS_TOUCH,
+  SPRITE_LOGO,
+} from "./sprites";
 
-export type SceneKind = "help" | "play" | "win" | "error";
+export type SceneKind = "help" | "about" | "play" | "win" | "error";
 
 export interface SessionSnapshot {
   state: string;
@@ -51,6 +68,8 @@ export interface ControlState {
   RESET: boolean;
 }
 
+export type MenuActionId = "play" | "about" | "back";
+
 export type InteractiveRegion = {
   id: string;
   x: number;
@@ -59,7 +78,7 @@ export type InteractiveRegion = {
   height: number;
 } & (
   | { kind: "link"; href?: string | null }
-  | { kind: "callback"; callback: () => void }
+  | { kind: "action"; action: MenuActionId }
 );
 
 export interface FirmwareModel {
@@ -118,14 +137,26 @@ function drawTextRight(
   y: number,
   text: string,
   color: number,
+  size: FontSize = "large",
+): void {
+  drawText(framebuffer, right - measureText(text, size), y, text, color, size);
+}
+
+function drawTextCenter(
+  framebuffer: Framebuffer,
+  x: number,
+  y: number,
+  text: string,
+  color: number,
+  size: FontSize = "large",
 ): void {
   drawText(
     framebuffer,
-    right - measureText(text, "small"),
+    x - Math.floor(measureText(text, size) / 2),
     y,
     text,
     color,
-    "small",
+    size,
   );
 }
 
@@ -251,15 +282,72 @@ function renderHelpScene(model: FirmwareModel): FirmwareFrame {
   clearFramebuffer(framebuffer, UI_COLORS.background);
 
   blitSprite(framebuffer, SPRITE_LOGO);
+
+  if (!(model.daily && model.session)) {
+    drawText(framebuffer, 44, 125, "LOADING", UI_COLORS.textMuted, "large");
+    return {
+      framebuffer,
+      controls,
+      hotspots,
+      scene: "help",
+    };
+  }
+  drawText(
+    framebuffer,
+    14,
+    35,
+    `${model.daily.title}`,
+    UI_COLORS.text,
+    "large",
+  );
+
+  drawTextRight(
+    framebuffer,
+    128 - 14,
+    35,
+    `${model.daily.date}`,
+    UI_COLORS.textMuted,
+    "large",
+  );
+
+  drawTextCenter(framebuffer, 64, 50, `AVAILABLE CONTROLS`, 4, "small");
+
   blitSprite(framebuffer, SPRITE_CONTROLS_DISABLED, 16, 57);
+  // light up the allowed controls.
+  const allowed = model.session?.availableActions ?? [];
+  for (const action of allowed) {
+    switch (action) {
+      case "ACTION1":
+        blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_UP, 29, 63, { [4]: 14 });
+        break;
+      case "ACTION2":
+        blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_DOWN, 29, 80, { [4]: 14 });
+        break;
+      case "ACTION3":
+        blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_LEFT, 21, 71, { [4]: 14 });
+        break;
+      case "ACTION4":
+        blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_RIGHT, 38, 71, {
+          [4]: 14,
+        });
+        break;
+      case "ACTION5":
+        blitSprite(framebuffer, SPRITE_CONTROLS_DIAMOND, 92, 61, { [4]: 14 });
+        break;
+      case "ACTION6":
+        blitSprite(framebuffer, SPRITE_CONTROLS_TOUCH, 57, 67, { [4]: 14 });
+        break;
+      case "ACTION7":
+        blitSprite(framebuffer, SPRITE_CONTROLS_CIRCLE, 80, 74, { [4]: 14 });
+        break;
+    }
+  }
 
   blitSprite(framebuffer, SPIRTE_PLAY, 37, 100);
   hotspots.push({
     id: "play",
-    kind: "callback",
-    callback: () => {
-      console.log("Play button clicked");
-    },
+    kind: "action",
+    action: "play",
     x: 35,
     y: 98,
     width: SPIRTE_PLAY.width + 4,
@@ -269,10 +357,8 @@ function renderHelpScene(model: FirmwareModel): FirmwareFrame {
   drawText(framebuffer, 50, 125, "ABOUT", UI_COLORS.textMuted, "large");
   hotspots.push({
     id: "about",
-    kind: "callback",
-    callback: () => {
-      console.log("About button clicked");
-    },
+    kind: "action",
+    action: "about",
     x: 48,
     y: 123,
     width: 33,
@@ -343,6 +429,21 @@ function renderHelpScene(model: FirmwareModel): FirmwareFrame {
   //   });
   // });
 
+  const selectedAction = model.helpSelection === 1 ? "about" : "play";
+  const selectedHotspot = hotspots.find(
+    (hotspot) => hotspot.kind === "action" && hotspot.action === selectedAction,
+  );
+  if (selectedHotspot) {
+    strokeRect(
+      framebuffer,
+      selectedHotspot.x,
+      selectedHotspot.y,
+      selectedHotspot.width,
+      selectedHotspot.height,
+      UI_COLORS.selection,
+    );
+  }
+
   const hoveredHotspot =
     model.hoverPoint === null
       ? null
@@ -363,6 +464,62 @@ function renderHelpScene(model: FirmwareModel): FirmwareFrame {
     controls,
     hotspots,
     scene: "help",
+  };
+}
+
+function renderAboutScene(model: FirmwareModel): FirmwareFrame {
+  const framebuffer = createFramebuffer(UI_COLORS.background);
+  const controls = buildHelpControls();
+  const hotspots: InteractiveRegion[] = [
+    {
+      id: "back",
+      kind: "action",
+      action: "back",
+      x: 42,
+      y: 119,
+      width: 44,
+      height: 13,
+    },
+  ];
+
+  clearFramebuffer(framebuffer, UI_COLORS.background);
+  strokeRect(framebuffer, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, UI_COLORS.border);
+  drawText(framebuffer, 44, 8, "ABOUT", UI_COLORS.text, "large");
+  drawText(framebuffer, 18, 52, "BLANK SCREEN", UI_COLORS.textMuted, "large");
+  drawText(framebuffer, 43, 121, "BACK", UI_COLORS.text, "large");
+
+  const selectedHotspot = hotspots[0] ?? null;
+  if (selectedHotspot) {
+    strokeRect(
+      framebuffer,
+      selectedHotspot.x,
+      selectedHotspot.y,
+      selectedHotspot.width,
+      selectedHotspot.height,
+      UI_COLORS.selection,
+    );
+  }
+
+  const hoveredHotspot =
+    model.hoverPoint === null
+      ? null
+      : findHotspot(hotspots, model.hoverPoint.x, model.hoverPoint.y);
+  if (hoveredHotspot) {
+    strokeRect(
+      framebuffer,
+      hoveredHotspot.x,
+      hoveredHotspot.y,
+      hoveredHotspot.width,
+      hoveredHotspot.height,
+      UI_COLORS.warning,
+    );
+  }
+
+  return {
+    framebuffer,
+    controls,
+    hotspots,
+    scene: "about",
   };
 }
 
@@ -489,6 +646,10 @@ export function renderFirmware(model: FirmwareModel): FirmwareFrame {
 
   if (model.scene === "help") {
     return renderHelpScene(model);
+  }
+
+  if (model.scene === "about") {
+    return renderAboutScene(model);
   }
 
   if (model.scene === "win") {

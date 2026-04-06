@@ -19,6 +19,7 @@ import {
   type FirmwareModel,
   type HelpLink,
   type HoverPoint,
+  type MenuActionId,
   type SceneKind,
   type SessionSnapshot,
 } from "./os";
@@ -205,6 +206,17 @@ function getFrameSequence(session: RuntimeSession | null): number[][][] {
   return session.grid.length > 0 ? [session.grid] : [];
 }
 
+const MAIN_MENU_ITEMS: readonly HelpLink[] = [
+  { id: "play", label: "PLAY" },
+  { id: "about", label: "ABOUT" },
+];
+
+const ABOUT_MENU_ITEMS: readonly HelpLink[] = [{ id: "back", label: "BACK" }];
+
+function getHelpMenuAction(selection: number | null): MenuActionId {
+  return selection === 1 ? "about" : "play";
+}
+
 export class Firmware {
   private readonly api: FirmwareApi;
   private readonly helpLinks: readonly HelpLink[];
@@ -226,7 +238,7 @@ export class Firmware {
     error: null,
     startedOnce: false,
     blinkVisible: true,
-    helpSelection: null,
+    helpSelection: 0,
     hoverPoint: null,
     clickPoint: null,
     displayGrid: null,
@@ -351,9 +363,7 @@ export class Firmware {
     }
 
     if (action === "HELP") {
-      this.state.scene = "help";
-      this.state.error = null;
-      this.renderAndEmit();
+      this.enterHelpMenu(true);
       return;
     }
 
@@ -363,9 +373,7 @@ export class Firmware {
         return;
       }
 
-      this.state.error = null;
-      this.state.scene = "help";
-      this.renderAndEmit();
+      this.enterHelpMenu(true);
       return;
     }
 
@@ -390,36 +398,56 @@ export class Firmware {
       }
 
       if (action === "ACTION1" || action === "ACTION3") {
-        this.state.helpSelection = getNextHelpSelection(
-          this.state.helpSelection,
-          -1,
-          this.helpLinks,
-        );
+        this.state.helpSelection =
+          getNextHelpSelection(this.state.helpSelection, -1, MAIN_MENU_ITEMS) ??
+          0;
         this.renderAndEmit();
         return;
       }
 
       if (action === "ACTION2" || action === "ACTION4") {
-        this.state.helpSelection = getNextHelpSelection(
-          this.state.helpSelection,
-          1,
-          this.helpLinks,
-        );
+        this.state.helpSelection =
+          getNextHelpSelection(this.state.helpSelection, 1, MAIN_MENU_ITEMS) ??
+          0;
         this.renderAndEmit();
         return;
       }
 
       if (action === "ACTION5") {
-        if (this.state.helpSelection !== null) {
-          this.openHelpLink(this.helpLinks[this.state.helpSelection]);
-          return;
-        }
-
-        await this.resumeOrStart();
+        await this.activateMenuAction(
+          getHelpMenuAction(this.state.helpSelection),
+        );
         return;
       }
 
-      await this.resumeOrStart();
+      return;
+    }
+
+    if (this.state.scene === "about") {
+      if (action === "RESET" || action === "ACTION5") {
+        await this.activateMenuAction("back");
+        return;
+      }
+
+      if (action === "ACTION1" || action === "ACTION3") {
+        this.state.helpSelection =
+          getNextHelpSelection(
+            this.state.helpSelection,
+            -1,
+            ABOUT_MENU_ITEMS,
+          ) ?? 0;
+        this.renderAndEmit();
+        return;
+      }
+
+      if (action === "ACTION2" || action === "ACTION4") {
+        this.state.helpSelection =
+          getNextHelpSelection(this.state.helpSelection, 1, ABOUT_MENU_ITEMS) ??
+          0;
+        this.renderAndEmit();
+        return;
+      }
+
       return;
     }
 
@@ -454,12 +482,23 @@ export class Firmware {
         );
         return;
       }
-      if (hotspot?.kind === "callback") {
-        hotspot.callback();
+      if (hotspot?.kind === "action") {
+        await this.activateMenuAction(hotspot.action);
         return;
       }
 
-      await this.resumeOrStart();
+      return;
+    }
+
+    if (this.state.scene === "about") {
+      if (this.isInputLocked()) {
+        return;
+      }
+
+      const hotspot = findHotspot(this.latestFrame.hotspots, point.x, point.y);
+      if (hotspot?.kind === "action") {
+        await this.activateMenuAction(hotspot.action);
+      }
       return;
     }
 
@@ -744,7 +783,7 @@ export class Firmware {
         if (shouldReveal) {
           this.state.scene = opened.frame.state === "WIN" ? "win" : "play";
           this.state.startedOnce = true;
-          this.state.helpSelection = null;
+          this.state.helpSelection = 0;
         }
         this.state.error = null;
         this.renderAndEmit();
@@ -755,7 +794,7 @@ export class Firmware {
 
         this.syncSession(null);
         this.state.scene = "help";
-        this.state.helpSelection = null;
+        this.state.helpSelection = 0;
         this.state.error = getErrorMessage(sessionError);
         this.renderAndEmit();
       } finally {
@@ -832,7 +871,7 @@ export class Firmware {
       if (isSessionIdentityError(actionError)) {
         this.syncSession(null);
         this.state.scene = "help";
-        this.state.helpSelection = null;
+        this.state.helpSelection = 0;
       }
       this.state.error = getErrorMessage(actionError);
       this.renderAndEmit();
@@ -868,6 +907,31 @@ export class Firmware {
     }
 
     await this.startSession({ revealScene: options?.revealScene ?? true });
+  }
+
+  private enterHelpMenu(clearError: boolean = false): void {
+    this.state.scene = "help";
+    this.state.helpSelection = 0;
+    if (clearError) {
+      this.state.error = null;
+    }
+    this.renderAndEmit();
+  }
+
+  private async activateMenuAction(action: MenuActionId): Promise<void> {
+    if (action === "play") {
+      await this.resumeOrStart();
+      return;
+    }
+
+    if (action === "about") {
+      this.state.scene = "about";
+      this.state.helpSelection = 0;
+      this.renderAndEmit();
+      return;
+    }
+
+    this.enterHelpMenu();
   }
 
   private openHelpLink(link: HelpLink | undefined): void {
