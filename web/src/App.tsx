@@ -1,5 +1,6 @@
 import {
   startTransition,
+  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -12,7 +13,9 @@ import {
   Firmware,
   type FirmwareApi,
   type FirmwareSnapshot,
+  type ShareTransferMode,
 } from "./firmware/Firmware";
+import { WinSceneModule } from "./firmware/scenes";
 import {
   fetchDailyPuzzle,
   openPlaySession,
@@ -124,6 +127,16 @@ function deriveConsolePressedState(
   return pressedState;
 }
 
+function isWinShareHotspotPoint(x: number, y: number): boolean {
+  const bounds = WinSceneModule.SHARE_HOTSPOT_BOUNDS;
+  return (
+    x >= bounds.x &&
+    x < bounds.x + bounds.width &&
+    y >= bounds.y &&
+    y < bounds.y + bounds.height
+  );
+}
+
 export default function App() {
   const [firmware] = useState(
     () =>
@@ -139,6 +152,62 @@ export default function App() {
     DEFAULT_CONSOLE_PRESSED_STATE,
   );
   const pressedKeysRef = useRef<Set<string>>(new Set());
+
+  const dispatchShareFeedbackIfNeeded = useCallback(
+    (action: ActionName, mode: ShareTransferMode) => {
+      if (
+        action === "ACTION5" &&
+        snapshot.scene === "win" &&
+        mode === "clipboard"
+      ) {
+        void firmware.dispatchAction(action);
+      }
+    },
+    [firmware, snapshot.scene],
+  );
+
+  const handleConsoleAction = useCallback(
+    (action: ActionName) => {
+      if (action === "ACTION5" && snapshot.scene === "win") {
+        return;
+      }
+
+      void firmware.dispatchAction(action);
+    },
+    [firmware, snapshot.scene],
+  );
+
+  const handleConsoleActionRelease = useCallback(
+    (action: ActionName) => {
+      const mode = firmware.tryCopyShareForAction(action);
+      dispatchShareFeedbackIfNeeded(action, mode);
+    },
+    [dispatchShareFeedbackIfNeeded, firmware],
+  );
+
+  const handleConsoleScreenPress = useCallback(
+    (x: number, y: number) => {
+      if (snapshot.scene === "win" && isWinShareHotspotPoint(x, y)) {
+        return;
+      }
+
+      const point = { x, y };
+      void firmware.pressScreen(point);
+    },
+    [firmware, snapshot.scene],
+  );
+
+  const handleConsoleScreenRelease = useCallback(
+    (x: number, y: number) => {
+      const mode = firmware.tryCopyShareForPoint({ x, y });
+      if (snapshot.scene !== "win" || mode !== "clipboard") {
+        return;
+      }
+
+      void firmware.pressScreen({ x, y });
+    },
+    [firmware, snapshot.scene],
+  );
 
   useEffect(() => {
     const unsubscribeSnapshot = firmware.on("snapshot", (nextSnapshot) => {
@@ -179,6 +248,12 @@ export default function App() {
     if (!pressedKeysRef.current.has(normalizedKey)) {
       pressedKeysRef.current.add(normalizedKey);
       setConsolePressed(deriveConsolePressedState(pressedKeysRef.current));
+    }
+
+    const mode = firmware.tryCopyShareForAction(mappedAction);
+    if (mappedAction === "ACTION5" && snapshot.scene === "win") {
+      dispatchShareFeedbackIfNeeded(mappedAction, mode);
+      return;
     }
 
     void firmware.dispatchAction(mappedAction);
@@ -232,9 +307,11 @@ export default function App() {
           inputLocked={snapshot.busy.inputLocked}
           pressedState={consolePressed}
           screenInteractive={snapshot.screenInteractive}
-          onAction={(action) => void firmware.dispatchAction(action)}
+          onAction={handleConsoleAction}
+          onActionRelease={handleConsoleActionRelease}
           onHoverPointChange={(point) => firmware.setHoverPoint(point)}
-          onScreenPress={(x, y) => void firmware.pressScreen({ x, y })}
+          onScreenPress={handleConsoleScreenPress}
+          onScreenRelease={handleConsoleScreenRelease}
         />
       </div>
     </div>

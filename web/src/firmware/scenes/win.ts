@@ -35,93 +35,7 @@ const BAND_COLORS: Record<PostGameBand, number> = {
   neutral: 3,
 };
 
-const SHARE_BAND_GLYPHS: Record<PostGameBand, string> = {
-  red: "🟥",
-  yellow: "🟨",
-  green: "🟩",
-  blue: "🟦",
-  neutral: "⬛",
-};
-
-const MONTH_LABELS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
-
 const COPIED_LABEL_DURATION_MS = 1200;
-
-function formatShareDateLabel(dailyDate: string | null | undefined): string {
-  if (!dailyDate) {
-    return "Unknown";
-  }
-
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dailyDate);
-  if (!match) {
-    return dailyDate;
-  }
-
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (
-    !Number.isInteger(month) ||
-    !Number.isInteger(day) ||
-    month < 1 ||
-    month > 12
-  ) {
-    return dailyDate;
-  }
-
-  return `${MONTH_LABELS[month - 1]} ${day}`;
-}
-
-function buildShareString(model: FirmwareModel): string | null {
-  const stats = model.postGame;
-  if (!stats) {
-    return null;
-  }
-
-  const dailyLabel = model.daily?.gameId;
-  const bandLine =
-    stats.levelMetrics.length > 0
-      ? stats.levelMetrics
-          .map(
-            (metric) =>
-              SHARE_BAND_GLYPHS[metric.band] ?? SHARE_BAND_GLYPHS.neutral,
-          )
-          .join("")
-      : SHARE_BAND_GLYPHS.neutral;
-
-  return [
-    `ARCaptcha #${dailyLabel} ⚡ ${stats.countedActions} actions`,
-    bandLine,
-    "⚖️ " +
-      (stats.outcome === "win" ? "Generally Intelligent" : "May Be A Robot"),
-    "https://arcaptcha.io",
-  ].join("\n");
-}
-
-async function copyShareString(model: FirmwareModel): Promise<void> {
-  const shareString = buildShareString(model);
-  if (!shareString) {
-    return;
-  }
-
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    return;
-  }
-
-  await navigator.clipboard.writeText(shareString);
-}
 
 function parseDailyDateToUtcMs(
   dailyDate: string | null | undefined,
@@ -217,9 +131,14 @@ function drawLevelHeatmap(
 }
 
 export class WinSceneModule implements SceneModule {
-  private static readonly SHARE_HOTSPOT_ID = "share-copy";
+  static readonly SHARE_HOTSPOT_ID = "share-copy";
+  static readonly SHARE_HOTSPOT_BOUNDS = {
+    x: 92,
+    y: 121,
+    width: 34,
+    height: 16,
+  } as const;
 
-  private latestModel: FirmwareModel | null = null;
   private copiedLabelUntilMs = 0;
   private copiedLabelTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -254,15 +173,7 @@ export class WinSceneModule implements SceneModule {
     context: SceneContext,
   ): Promise<void> {
     if (action === "ACTION5") {
-      if (this.latestModel) {
-        try {
-          await copyShareString(this.latestModel);
-        } catch {
-          // Ignore clipboard write failures; gameplay flow should remain responsive.
-        }
-
-        this.showCopiedLabel(context);
-      }
+      this.showCopiedLabel(context);
       return;
     }
 
@@ -290,8 +201,6 @@ export class WinSceneModule implements SceneModule {
   }
 
   render(model: FirmwareModel): FirmwareFrame {
-    this.latestModel = model;
-
     const framebuffer = createFramebuffer(UI_COLORS.background);
     const stats = model.postGame;
 
@@ -357,16 +266,20 @@ export class WinSceneModule implements SceneModule {
     const hotspots: InteractiveRegion[] = [];
 
     if (Date.now() < this.copiedLabelUntilMs) {
-      fillRect(framebuffer, 92, 121, 34, 16, UI_COLORS.background);
+      fillRect(
+        framebuffer,
+        WinSceneModule.SHARE_HOTSPOT_BOUNDS.x,
+        WinSceneModule.SHARE_HOTSPOT_BOUNDS.y,
+        WinSceneModule.SHARE_HOTSPOT_BOUNDS.width,
+        WinSceneModule.SHARE_HOTSPOT_BOUNDS.height,
+        UI_COLORS.background,
+      );
       drawTextRight(framebuffer, 128 - 5, 125, "COPIED", 14, "large");
     } else {
       hotspots.push({
         id: WinSceneModule.SHARE_HOTSPOT_ID,
         kind: "link",
-        x: 92,
-        y: 121,
-        width: 34,
-        height: 16,
+        ...WinSceneModule.SHARE_HOTSPOT_BOUNDS,
       });
     }
 

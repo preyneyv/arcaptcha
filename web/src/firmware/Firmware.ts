@@ -1,3 +1,4 @@
+import copy from "copy-to-clipboard";
 import {
   ApiRequestError,
   type ActionName,
@@ -140,6 +141,10 @@ const DEFAULT_TIMINGS: FirmwareTimings = {
   interLevelTransitionMs: 280,
 };
 
+const SHARE_COPY_THROTTLE_MS = 300;
+
+export type ShareTransferMode = "none" | "clipboard" | "share-sheet";
+
 const INTER_LEVEL_WIPE_COLOR = 14;
 const INTER_LEVEL_WIPE_BAND_ROWS = 3;
 const FAILURE_STATES = new Set([
@@ -169,6 +174,19 @@ const DEFAULT_SCHEDULER: FirmwareScheduler = {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isIosOrAndroidPlatform(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const ua = (navigator.userAgent || navigator.vendor || "").toLowerCase();
+  const isAndroid = ua.includes("android");
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+  const isIPadOS = ua.includes("macintosh") && navigator.maxTouchPoints > 1;
+
+  return isAndroid || isIOS || isIPadOS;
 }
 
 function preferSessionGameId(
@@ -422,33 +440,23 @@ function buildPostGameShareText(
   },
 ): string {
   const glyphByBand: Record<PostGameBand, string> = {
-    red: "R",
-    yellow: "Y",
-    green: "G",
-    blue: "B",
-    neutral: "-",
+    red: "🟥",
+    yellow: "🟨",
+    green: "🟩",
+    blue: "🟦",
+    neutral: "⬛",
   };
 
-  const outcomeLabel = stats.outcome === "win" ? "Cleared" : "Failed";
-  const dayLabel = daily?.date || daily?.gameId || "Unknown";
-  const levels = stats.levelMetrics
-    .map((entry) => glyphByBand[entry.band])
-    .join("");
-
-  const baselineLabel =
-    stats.baselineActions === null
-      ? ""
-      : ` | Baseline ${stats.baselineActions}`;
-  const scoreLabel =
-    stats.scorePercent === null ? "Score n/a" : `Score ${stats.scorePercent}%`;
+  const dayLabel = daily?.gameId || "Unknown";
+  const levels =
+    stats.levelMetrics.length > 0
+      ? stats.levelMetrics.map((entry) => glyphByBand[entry.band]).join("")
+      : glyphByBand.neutral;
 
   return [
-    `Arcaptcha ${dayLabel}`,
-    `${outcomeLabel} ${stats.levelsCompleted}/${stats.winLevels}`,
-    `Actions ${stats.countedActions}${baselineLabel}`,
-    scoreLabel,
-    `Levels ${levels}`,
-    "#arcaptcha",
+    `ARCaptcha #${dayLabel} ⚡ ${stats.countedActions} moves`,
+    levels,
+    "https://arcaptcha.io",
   ].join("\n");
 }
 
@@ -593,6 +601,7 @@ export class Firmware {
   private winCountdownTimerId: number | null = null;
   private pendingInterLevelTransitionFrom: Framebuffer | null = null;
   private pendingInterLevelTransitionAfterPlayback = false;
+  private lastShareCopyAtMs = 0;
   private disposed = false;
   private lifecycleId = 0;
 
@@ -707,6 +716,80 @@ export class Firmware {
     return () => {
       this.listeners[event].delete(listener);
     };
+  }
+
+  private getShareTextForCurrentScene(): string | null {
+    if (this.state.scene !== "win") {
+      return null;
+    }
+
+    return (
+      toPostGameStats(this.state.session, this.state.daily)?.shareText ?? null
+    );
+  }
+
+  private copyShareTextNow(shareText: string): ShareTransferMode {
+    const now = Date.now();
+    if (now - this.lastShareCopyAtMs < SHARE_COPY_THROTTLE_MS) {
+      return "none";
+    }
+
+    if (
+      isIosOrAndroidPlatform() &&
+      typeof navigator !== "undefined" &&
+      typeof navigator.share === "function"
+    ) {
+      this.lastShareCopyAtMs = now;
+      void navigator.share({ text: shareText }).catch(() => {
+        // Ignore cancellation/failures; share UI can be dismissed by the user.
+      });
+      return "share-sheet";
+    }
+
+    const copied = copy(shareText, { format: "text/plain" });
+    if (copied) {
+      this.lastShareCopyAtMs = now;
+      return "clipboard";
+    }
+
+    return "none";
+  }
+
+  tryCopyShareForAction(action: ActionName): ShareTransferMode {
+    if (this.disposed || action !== "ACTION5" || this.isInputLocked()) {
+      return "none";
+    }
+
+    const shareText = this.getShareTextForCurrentScene();
+    if (!shareText) {
+      return "none";
+    }
+
+    return this.copyShareTextNow(shareText);
+  }
+
+  tryCopyShareForPoint(point: HoverPoint): ShareTransferMode {
+    if (this.disposed || this.isInputLocked() || this.state.scene !== "win") {
+      return "none";
+    }
+
+    const bounds = WinSceneModule.SHARE_HOTSPOT_BOUNDS;
+    const isInShareHotspot =
+      point.x >= bounds.x &&
+      point.x < bounds.x + bounds.width &&
+      point.y >= bounds.y &&
+      point.y < bounds.y + bounds.height;
+
+    if (!isInShareHotspot) {
+      return "none";
+    }
+
+    const shareText = this.getShareTextForCurrentScene();
+    if (!shareText) {
+      return "none";
+    }
+
+    return this.copyShareTextNow(shareText);
   }
 
   async dispatchAction(action: ActionName): Promise<void> {

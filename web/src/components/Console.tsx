@@ -92,6 +92,7 @@ function ConsoleScreen({
   screenInteractive,
   onHoverPointChange,
   onScreenPress,
+  onScreenRelease,
 }: {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   action6Available: boolean;
@@ -99,6 +100,7 @@ function ConsoleScreen({
   screenInteractive: boolean;
   onHoverPointChange: (point: HoverPoint | null) => boolean;
   onScreenPress: (x: number, y: number) => void;
+  onScreenRelease?: (x: number, y: number) => void;
 }) {
   const [hoverInteractive, setHoverInteractive] = useState(screenInteractive);
 
@@ -152,12 +154,27 @@ function ConsoleScreen({
       return;
     }
 
+    event.currentTarget.setPointerCapture(event.pointerId);
+
     const screenPoint = getScreenPoint(
       event.currentTarget,
       event.clientX,
       event.clientY,
     );
     onScreenPress(screenPoint.x, screenPoint.y);
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (inputLocked || !onScreenRelease) {
+      return;
+    }
+
+    const screenPoint = getScreenPoint(
+      event.currentTarget,
+      event.clientX,
+      event.clientY,
+    );
+    onScreenRelease(screenPoint.x, screenPoint.y);
   };
 
   return (
@@ -169,6 +186,7 @@ function ConsoleScreen({
         width={SCREEN_WIDTH}
         height={SCREEN_HEIGHT}
         onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
         onPointerMove={updateHoveredPoint}
         onPointerLeave={clearHoveredPoint}
         onPointerCancel={clearHoveredPoint}
@@ -197,6 +215,7 @@ function ConsoleButton({
   icon,
   inputLocked,
   onTrigger,
+  onReleaseTrigger,
   pressed,
   setPressed,
 }: {
@@ -205,6 +224,7 @@ function ConsoleButton({
   icon: string;
   inputLocked: boolean;
   onTrigger: () => void;
+  onReleaseTrigger?: () => void;
   pressed: boolean;
   setPressed: (pressed: boolean) => void;
 }) {
@@ -215,6 +235,11 @@ function ConsoleButton({
     setPressed(false);
     stopRepeating();
   }, [setPressed, stopRepeating]);
+
+  const handlePointerUp = useCallback(() => {
+    release();
+    onReleaseTrigger?.();
+  }, [onReleaseTrigger, release]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (inputLocked) {
@@ -234,7 +259,7 @@ function ConsoleButton({
       })}
       disabled={disabled}
       onPointerDown={handlePointerDown}
-      onPointerUp={release}
+      onPointerUp={handlePointerUp}
       onPointerCancel={release}
       onPointerLeave={release}
       onLostPointerCapture={release}
@@ -462,8 +487,10 @@ export function Console({
   pressedState,
   screenInteractive,
   onAction,
+  onActionRelease,
   onHoverPointChange,
   onScreenPress,
+  onScreenRelease,
 }: {
   framebuffer: Uint8Array;
   controls: ControlState;
@@ -471,8 +498,10 @@ export function Console({
   pressedState: ConsolePressedState;
   screenInteractive: boolean;
   onAction: (action: ActionName) => void;
+  onActionRelease?: (action: ActionName) => void;
   onHoverPointChange: (point: HoverPoint | null) => boolean;
   onScreenPress: (x: number, y: number) => void;
+  onScreenRelease?: (x: number, y: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [diamondPressed, setDiamondPressed] = useState(false);
@@ -520,6 +549,7 @@ export function Console({
             screenInteractive={screenInteractive}
             onHoverPointChange={onHoverPointChange}
             onScreenPress={onScreenPress}
+            onScreenRelease={onScreenRelease}
           />
           <div className="console-ui">
             <div className="console-action-row-1">
@@ -545,6 +575,7 @@ export function Console({
                   disabled={!controls.ACTION5}
                   inputLocked={inputLocked}
                   onTrigger={() => onAction("ACTION5")}
+                  onReleaseTrigger={() => onActionRelease?.("ACTION5")}
                   pressed={diamondIsPressed}
                   setPressed={setDiamondPressed}
                 />

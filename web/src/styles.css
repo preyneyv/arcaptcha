@@ -2,13 +2,6 @@
   color-scheme: dark;
 }
 
-@font-face {
-  font-family: "AV05 Logotype";
-  src:
-    url("./assets/fonts/av05-logotype.woff2") format("woff2"),
-    url("./assets/fonts/av05-logotype.otf") format("opentype");
-}
-
 html,
 body,
 #root {
@@ -17,7 +10,6 @@ body,
 
 body {
   background: #0b0b0b;
-  font-family: "AV05 Logotype", sans-serif;
   margin: 0;
   overflow: hidden;
   padding: 0;
