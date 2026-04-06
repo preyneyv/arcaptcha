@@ -9,15 +9,54 @@ import {
   GAMEPLAY_HEIGHT,
   GAMEPLAY_SCALE,
   SCREEN_WIDTH,
+  setPixel,
 } from "../framebuffer";
-import type {
-  ControlState,
-  FirmwareFrame,
-  FirmwareModel,
-  HoverPoint,
+import {
+  getLevelScorePercent,
+  getPerformanceBand,
+  type ControlState,
+  type FirmwareFrame,
+  type FirmwareModel,
+  type HoverPoint,
+  type PostGameBand,
 } from "../os";
 import { UI_COLORS } from "../palette";
 import type { SceneContext, SceneModule } from "./base";
+
+const STATUS_BAND_COLORS: Record<PostGameBand, number> = {
+  red: 8,
+  yellow: 11,
+  green: 14,
+  blue: 9,
+  neutral: 10,
+};
+
+const FILLED_CIRCLE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [0, -2],
+  [-1, -1],
+  [0, -1],
+  [1, -1],
+  [-2, 0],
+  [-1, 0],
+  [0, 0],
+  [1, 0],
+  [2, 0],
+  [-1, 1],
+  [0, 1],
+  [1, 1],
+  [0, 2],
+];
+
+const HOLLOW_CIRCLE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [0, -2],
+  [-1, -1],
+  [1, -1],
+  [-2, 0],
+  [2, 0],
+  [-1, 1],
+  [1, 1],
+  [0, 2],
+];
 
 function createControlState(defaultValue: boolean = false): ControlState {
   return {
@@ -31,21 +70,6 @@ function createControlState(defaultValue: boolean = false): ControlState {
     HELP: defaultValue,
     RESET: defaultValue,
   };
-}
-
-function truncateText(text: string, maxWidth: number): string {
-  if (measureText(text, "large") <= maxWidth) {
-    return text;
-  }
-
-  let candidate = text.toUpperCase();
-  while (
-    candidate.length > 0 &&
-    measureText(`${candidate}.`, "large") > maxWidth
-  ) {
-    candidate = candidate.slice(0, -1);
-  }
-  return candidate ? `${candidate}.` : "";
 }
 
 function drawTextRight(
@@ -63,6 +87,79 @@ function drawTextRight(
     color,
     "small",
   );
+}
+
+function drawStatusCircle(
+  framebuffer: ReturnType<typeof createFramebuffer>,
+  centerX: number,
+  centerY: number,
+  color: number,
+  filled: boolean,
+): void {
+  const offsets = filled ? FILLED_CIRCLE_OFFSETS : HOLLOW_CIRCLE_OFFSETS;
+  for (const [offsetX, offsetY] of offsets) {
+    setPixel(framebuffer, centerX + offsetX, centerY + offsetY, color);
+  }
+}
+
+function drawPerformanceCircles(
+  framebuffer: ReturnType<typeof createFramebuffer>,
+  model: FirmwareModel,
+  progress: string,
+): void {
+  const goal = Math.max(
+    1,
+    model.session?.winLevels || model.session?.levelsCompleted || 1,
+  );
+  const completed = Math.max(
+    0,
+    Math.min(model.session?.levelsCompleted ?? 0, goal),
+  );
+  const progressWidth = measureText(progress, "small");
+  const left = 4;
+  const right = SCREEN_WIDTH - progressWidth - 8;
+  const centerY = 133;
+  const levelActionCounts = model.session?.levelActionCounts ?? [];
+  const baselineActionsByLevel = model.daily?.baselineActions ?? [];
+  const pendingColor = UI_COLORS.border;
+
+  if (right <= left) {
+    return;
+  }
+
+  if (goal === 1) {
+    const scorePercent = getLevelScorePercent(
+      levelActionCounts[0],
+      baselineActionsByLevel[0],
+    );
+    const completedColor = STATUS_BAND_COLORS[getPerformanceBand(scorePercent)];
+    drawStatusCircle(
+      framebuffer,
+      Math.floor((left + right) / 2),
+      centerY,
+      completed > 0 ? completedColor : pendingColor,
+      completed > 0,
+    );
+    return;
+  }
+
+  for (let index = 0; index < goal; index += 1) {
+    const centerX =
+      left + Math.floor((index * (right - left)) / Math.max(1, goal - 1));
+    const isComplete = index < completed;
+    const scorePercent = getLevelScorePercent(
+      levelActionCounts[index],
+      baselineActionsByLevel[index],
+    );
+    const completedColor = STATUS_BAND_COLORS[getPerformanceBand(scorePercent)];
+    drawStatusCircle(
+      framebuffer,
+      centerX,
+      centerY,
+      isComplete ? completedColor : pendingColor,
+      isComplete,
+    );
+  }
 }
 
 function buildGameplayControls(model: FirmwareModel): ControlState {
@@ -205,11 +302,10 @@ export class PlaySceneModule implements SceneModule {
       1,
       UI_COLORS.border,
     );
-    const title = truncateText(model.daily?.gameId ?? "SYNC", 64);
     const goal =
       model.session?.winLevels || model.session?.levelsCompleted || 1;
     const progress = `${model.session?.levelsCompleted ?? 0}/${goal}`;
-    drawText(framebuffer, 2, 131, title, UI_COLORS.text, "small");
+    drawPerformanceCircles(framebuffer, model, progress);
     drawTextRight(
       framebuffer,
       SCREEN_WIDTH - 2,

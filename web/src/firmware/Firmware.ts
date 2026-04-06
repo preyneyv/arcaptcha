@@ -13,11 +13,17 @@ import {
 } from "./framebuffer";
 import {
   findHotspot,
+  getLevelScorePercent,
+  getPerformanceBand,
   type ControlState,
   type FirmwareFrame,
   type FirmwareModel,
   type HoverPoint,
   type MenuActionId,
+  type PostGameBand,
+  type PostGameLevelMetric,
+  type PostGameOutcome,
+  type PostGameStats,
   type SceneKind,
   type SessionSnapshot,
 } from "./os";
@@ -44,6 +50,8 @@ interface RuntimeSession {
   countedActions: number;
   levelsCompleted: number;
   winLevels: number;
+  levelActionCounts: number[];
+  currentLevelStartActionCount: number;
 }
 
 interface FirmwareState {
@@ -125,6 +133,15 @@ const DEFAULT_TIMINGS: FirmwareTimings = {
 
 const INTER_LEVEL_WIPE_COLOR = 14;
 const INTER_LEVEL_WIPE_BAND_ROWS = 3;
+const FAILURE_STATES = new Set([
+  "FAIL",
+  "FAILED",
+  "LOSS",
+  "LOSE",
+  "LOST",
+  "GAME_OVER",
+  "GAMEOVER",
+]);
 
 const DEFAULT_SCHEDULER: FirmwareScheduler = {
   setTimeout: (fn, ms) => window.setTimeout(fn, ms),
@@ -194,7 +211,268 @@ function toSessionSnapshot(
     countedActions: session.countedActions,
     levelsCompleted: session.levelsCompleted,
     winLevels: session.winLevels,
+    levelActionCounts: session.levelActionCounts,
   };
+}
+
+function deriveLevelActionCounts(
+  previousSession: RuntimeSession,
+  nextCountedActions: number,
+  nextLevelsCompleted: number,
+): {
+  levelActionCounts: number[];
+  currentLevelStartActionCount: number;
+} {
+  if (
+    nextLevelsCompleted < previousSession.levelsCompleted ||
+    nextCountedActions < previousSession.countedActions
+  ) {
+    return {
+      levelActionCounts: [],
+      currentLevelStartActionCount: nextCountedActions,
+    };
+  }
+
+  const nextLevelActionCounts = previousSession.levelActionCounts.slice();
+  let nextCurrentLevelStartActionCount =
+    previousSession.currentLevelStartActionCount;
+
+  if (nextLevelsCompleted > previousSession.levelsCompleted) {
+    const completedDelta =
+      nextLevelsCompleted - previousSession.levelsCompleted;
+    const completedLevelActions = Math.max(
+      0,
+      nextCountedActions - previousSession.currentLevelStartActionCount,
+    );
+
+    nextLevelActionCounts.push(completedLevelActions);
+    for (let index = 1; index < completedDelta; index += 1) {
+      nextLevelActionCounts.push(0);
+    }
+
+    nextCurrentLevelStartActionCount = nextCountedActions;
+  }
+
+  if (nextLevelActionCounts.length > nextLevelsCompleted) {
+    nextLevelActionCounts.length = nextLevelsCompleted;
+  }
+
+  return {
+    levelActionCounts: nextLevelActionCounts,
+    currentLevelStartActionCount: nextCurrentLevelStartActionCount,
+  };
+}
+
+function normalizeSessionState(state: string): string {
+  return state.trim().toUpperCase();
+}
+
+function isWinStateValue(state: string): boolean {
+  return normalizeSessionState(state) === "WIN";
+}
+
+function isFailureStateValue(state: string): boolean {
+  const normalizedState = normalizeSessionState(state);
+  return (
+    FAILURE_STATES.has(normalizedState) || normalizedState.startsWith("FAIL")
+  );
+}
+
+function hasGameplayActions(actions: readonly ActionName[]): boolean {
+  return actions.some((action) => action !== "HELP" && action !== "RESET");
+}
+
+function isPostGameSession(session: RuntimeSession | null): boolean {
+  if (!session) {
+    return false;
+  }
+
+  if (isWinStateValue(session.state) || isFailureStateValue(session.state)) {
+    return true;
+  }
+
+  // Fallback: a locked-out session that has no gameplay actions before full completion
+  // is treated as a failed run so we can show post-game diagnostics.
+  return (
+    !hasGameplayActions(session.availableActions) &&
+    session.levelsCompleted < Math.max(1, session.winLevels)
+  );
+}
+
+function getSceneForSession(session: RuntimeSession | null): SceneKind {
+  if (isPostGameSession(session)) {
+    return "win";
+  }
+
+  return "play";
+}
+
+function buildPostGameLevelMetrics(
+  levelsCompleted: number,
+  winLevels: number,
+  outcome: PostGameOutcome,
+  levelActionCounts: readonly number[],
+  baselineActionsByLevel: readonly number[] | null | undefined,
+): PostGameLevelMetric[] {
+  const levelMetrics: PostGameLevelMetric[] = [];
+
+  for (let level = 1; level <= winLevels; level += 1) {
+    if (level <= levelsCompleted) {
+      const levelIndex = level - 1;
+      const scorePercent = getLevelScorePercent(
+        levelActionCounts[levelIndex],
+        baselineActionsByLevel?.[levelIndex],
+      );
+
+      levelMetrics.push({
+        level,
+        band: getPerformanceBand(scorePercent),
+      });
+      continue;
+    }
+
+    if (outcome === "fail" && level === levelsCompleted + 1) {
+      levelMetrics.push({
+        level,
+        band: "red",
+      });
+      continue;
+    }
+
+    levelMetrics.push({
+      level,
+      band: "neutral",
+    });
+  }
+
+  return levelMetrics;
+}
+
+function buildPostGameShareText(
+  daily: DailyPuzzle | null,
+  stats: {
+    outcome: PostGameOutcome;
+    levelsCompleted: number;
+    winLevels: number;
+    countedActions: number;
+    baselineActions: number | null;
+    scorePercent: number | null;
+    levelMetrics: PostGameLevelMetric[];
+  },
+): string {
+  const glyphByBand: Record<PostGameBand, string> = {
+    red: "R",
+    yellow: "Y",
+    green: "G",
+    blue: "B",
+    neutral: "-",
+  };
+
+  const outcomeLabel = stats.outcome === "win" ? "Cleared" : "Failed";
+  const dayLabel = daily?.date || daily?.gameId || "Unknown";
+  const levels = stats.levelMetrics
+    .map((entry) => glyphByBand[entry.band])
+    .join("");
+
+  const baselineLabel =
+    stats.baselineActions === null
+      ? ""
+      : ` | Baseline ${stats.baselineActions}`;
+  const scoreLabel =
+    stats.scorePercent === null ? "Score n/a" : `Score ${stats.scorePercent}%`;
+
+  return [
+    `Arcaptcha ${dayLabel}`,
+    `${outcomeLabel} ${stats.levelsCompleted}/${stats.winLevels}`,
+    `Actions ${stats.countedActions}${baselineLabel}`,
+    scoreLabel,
+    `Levels ${levels}`,
+    "#arcaptcha",
+  ].join("\n");
+}
+
+function toPostGameStats(
+  session: RuntimeSession | null,
+  daily: DailyPuzzle | null,
+): PostGameStats | null {
+  if (!isPostGameSession(session) || !session) {
+    return null;
+  }
+
+  const outcome: PostGameOutcome = isWinStateValue(session.state)
+    ? "win"
+    : "fail";
+  const winLevels = Math.max(1, session.winLevels);
+  const levelsCompleted = Math.max(
+    0,
+    Math.min(session.levelsCompleted, winLevels),
+  );
+  const countedActions = Math.max(0, session.countedActions);
+  const baselineActions = sumBaselineActions(daily?.baselineActions);
+  const deltaActions =
+    baselineActions === null ? null : countedActions - baselineActions;
+  const scorePercent =
+    baselineActions !== null && countedActions > 0
+      ? Math.round((baselineActions / countedActions) * 100)
+      : null;
+  const levelMetrics = buildPostGameLevelMetrics(
+    levelsCompleted,
+    winLevels,
+    outcome,
+    session.levelActionCounts,
+    daily?.baselineActions,
+  );
+
+  return {
+    outcome,
+    headline: outcome === "win" ? "ENVIRONMENT CLEARED" : "ENVIRONMENT FAILED",
+    detail:
+      outcome === "win"
+        ? "Post-game stats are ready."
+        : "Run ended before completion.",
+    countedActions,
+    baselineActions,
+    deltaActions,
+    scorePercent,
+    levelsCompleted,
+    winLevels,
+    levelMetrics,
+    shareText: buildPostGameShareText(daily, {
+      outcome,
+      levelsCompleted,
+      winLevels,
+      countedActions,
+      baselineActions,
+      scorePercent,
+      levelMetrics,
+    }),
+  };
+}
+
+function sumBaselineActions(
+  baselineActionsByLevel: readonly number[] | null | undefined,
+): number | null {
+  if (!baselineActionsByLevel || baselineActionsByLevel.length === 0) {
+    return null;
+  }
+
+  let total = 0;
+  let hasValue = false;
+
+  for (const value of baselineActionsByLevel) {
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+
+    total += Math.max(0, Math.trunc(value));
+    hasValue = true;
+  }
+
+  if (!hasValue) {
+    return null;
+  }
+
+  return total;
 }
 
 function getFrameSequence(session: RuntimeSession | null): number[][][] {
@@ -485,6 +763,7 @@ export class Firmware {
       scene: this.state.scene,
       daily: this.state.daily,
       session: toSessionSnapshot(this.state.session, this.state.displayGrid),
+      postGame: toPostGameStats(this.state.session, this.state.daily),
       hoverPoint: this.getPointInteractivity(this.state.hoverPoint)
         ? this.state.hoverPoint
         : null,
@@ -804,7 +1083,7 @@ export class Firmware {
       this.state.scene === "play" &&
       previousSession !== null &&
       nextSession !== null &&
-      nextSession.state !== "WIN" &&
+      !isPostGameSession(nextSession) &&
       nextSession.levelsCompleted > previousSession.levelsCompleted;
 
     const frames = getFrameSequence(nextSession);
@@ -878,7 +1157,7 @@ export class Firmware {
         }
 
         const shouldReveal = this.pendingSessionReveal;
-        this.syncSession({
+        const openedSession: RuntimeSession = {
           cardId: opened.session.cardId,
           gameId: opened.session.gameId,
           guid: opened.frame.guid,
@@ -889,9 +1168,12 @@ export class Firmware {
           countedActions: 1,
           levelsCompleted: opened.frame.levelsCompleted,
           winLevels: opened.frame.winLevels,
-        });
+          levelActionCounts: [],
+          currentLevelStartActionCount: 1,
+        };
+        this.syncSession(openedSession);
         if (shouldReveal) {
-          this.state.scene = opened.frame.state === "WIN" ? "win" : "play";
+          this.state.scene = getSceneForSession(openedSession);
         }
         this.state.error = null;
         this.renderAndEmit();
@@ -951,7 +1233,7 @@ export class Firmware {
         return;
       }
 
-      this.syncSession({
+      const nextSession: RuntimeSession = {
         ...activeSession,
         gameId: preferSessionGameId(activeSession.gameId, nextFrame.gameId),
         guid: nextFrame.guid,
@@ -963,10 +1245,21 @@ export class Firmware {
           action === "RESET" ? 1 : activeSession.countedActions + 1,
         levelsCompleted: nextFrame.levelsCompleted,
         winLevels: nextFrame.winLevels,
-      });
+        ...(action === "RESET"
+          ? {
+              levelActionCounts: [],
+              currentLevelStartActionCount: 1,
+            }
+          : deriveLevelActionCounts(
+              activeSession,
+              activeSession.countedActions + 1,
+              nextFrame.levelsCompleted,
+            )),
+      };
+      this.syncSession(nextSession);
       this.state.error = null;
       if (options?.revealScene ?? this.state.scene !== "help") {
-        this.state.scene = nextFrame.state === "WIN" ? "win" : "play";
+        this.state.scene = getSceneForSession(nextSession);
       }
       this.renderAndEmit();
     } catch (actionError) {
@@ -997,7 +1290,7 @@ export class Firmware {
       return;
     }
 
-    this.state.scene = this.state.session.state === "WIN" ? "win" : "play";
+    this.state.scene = getSceneForSession(this.state.session);
     this.state.error = null;
     this.renderAndEmit();
   }

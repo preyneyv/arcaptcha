@@ -1,10 +1,9 @@
 import type { ActionName } from "../../lib/api";
-import { drawText, FontSize, measureText } from "../font";
+import { drawText, drawTextCenter, drawTextRight } from "../font";
 import {
   blitSprite,
   clearFramebuffer,
   createFramebuffer,
-  type Framebuffer,
 } from "../framebuffer";
 import {
   findHotspot,
@@ -48,35 +47,6 @@ function createControlState(defaultValue: boolean = false): ControlState {
     HELP: defaultValue,
     RESET: defaultValue,
   };
-}
-
-function drawTextRight(
-  framebuffer: Framebuffer,
-  right: number,
-  y: number,
-  text: string,
-  color: number,
-  size: FontSize = "large",
-): void {
-  drawText(framebuffer, right - measureText(text, size), y, text, color, size);
-}
-
-function drawTextCenter(
-  framebuffer: Framebuffer,
-  x: number,
-  y: number,
-  text: string,
-  color: number,
-  size: FontSize = "large",
-): void {
-  drawText(
-    framebuffer,
-    x - Math.floor(measureText(text, size) / 2),
-    y,
-    text,
-    color,
-    size,
-  );
 }
 
 function getMenuAction(selection: number | null): MenuActionId {
@@ -188,7 +158,7 @@ export class HelpSceneModule implements SceneModule {
       framebuffer,
       14,
       35,
-      `${model.daily.title}`,
+      `${model.daily.gameId.toUpperCase()}`,
       UI_COLORS.text,
       "large",
     );

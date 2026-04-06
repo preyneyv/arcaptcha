@@ -1,24 +1,46 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from arc_agi import Arcade
+from arc_agi import Arcade, EnvironmentInfo
 from arc_agi.server import create_app as create_arcade_app
 from flask import Flask, Response, jsonify, send_from_directory
 
 from .catalog import GameCatalog
 from .config import AppConfig
 
+LOGGER = logging.getLogger(__name__)
+
 
 def create_app(config: AppConfig | None = None) -> Flask:
     config = config or AppConfig.from_env()
-    catalog = GameCatalog.load(config.catalog_path)
     arcade = Arcade(
         operation_mode=config.operation_mode,
         environments_dir=str(config.environments_dir),
         recordings_dir=str(config.recordings_dir),
     )
+
+    environments: tuple[EnvironmentInfo, ...] = ()
+    try:
+        environments = tuple(arcade.get_environments())
+    except Exception as error:  # pragma: no cover - defensive startup fallback
+        LOGGER.warning("failed to fetch available games at startup: %s", error)
+
+    if environments:
+        try:
+            GameCatalog.write_from_environments(
+                config.catalog_path,
+                environments,
+                season_name="arc-agi",
+            )
+        except Exception as error:  # pragma: no cover - defensive bootstrap fallback
+            LOGGER.warning("failed to refresh catalog from available games: %s", error)
+
+    catalog = GameCatalog.load(config.catalog_path)
+    environment_index = catalog.environment_index(environments)
+
     app, _ = create_arcade_app(
         arcade,
         save_all_recordings=False,
@@ -29,18 +51,19 @@ def create_app(config: AppConfig | None = None) -> Flask:
         "catalog": catalog,
         "config": config,
         "arcade": arcade,
+        "environment_index": environment_index,
     }
 
-    _register_api_routes(app, arcade, catalog, config)
+    _register_api_routes(app, catalog, config, environment_index)
     _register_frontend_routes(app, config)
     return app
 
 
 def _register_api_routes(
     app: Flask,
-    arcade: Arcade,
     catalog: GameCatalog,
     config: AppConfig,
+    environment_index: dict[str, EnvironmentInfo],
 ) -> None:
     @app.get("/api/arcaptcha/health")
     def arcaptcha_health() -> Response | tuple[Response, int]:
@@ -49,7 +72,7 @@ def _register_api_routes(
                 "status": "ok",
                 "operation_mode": config.operation_mode.value,
                 "catalog_entries": len(catalog.entries),
-                "available_environments": len(arcade.get_environments()),
+                "available_environments": len(environment_index),
                 "frontend_built": (config.frontend_dist_dir / "index.html").exists(),
                 "season_start": config.season_start.isoformat(),
             }
@@ -59,10 +82,8 @@ def _register_api_routes(
     def arcaptcha_daily() -> Response | tuple[Response, int]:
         now = datetime.now(timezone.utc)
         scheduled = catalog.current(now, config.season_start)
-        environment = catalog.environment_index(arcade.get_environments()).get(
-            scheduled.entry.game_id
-        )
-        return jsonify(scheduled.to_payload(environment, now, config.reveal_hour_utc))
+        environment = environment_index.get(scheduled.entry.game_id)
+        return jsonify(scheduled.to_payload(environment))
 
 
 def _register_frontend_routes(app: Flask, config: AppConfig) -> None:

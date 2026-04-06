@@ -10,6 +10,81 @@ export interface SessionSnapshot {
   countedActions: number;
   levelsCompleted: number;
   winLevels: number;
+  levelActionCounts: number[];
+}
+
+export type PostGameOutcome = "win" | "fail";
+
+export type PostGameBand = "red" | "yellow" | "green" | "blue" | "neutral";
+
+export const PERFORMANCE_BAND_THRESHOLDS = {
+  blueAbove: 105,
+  greenAtLeast: 98,
+  yellowAtLeast: 85,
+} as const;
+
+export function getPerformanceBand(scorePercent: number | null): PostGameBand {
+  if (scorePercent === null) {
+    return "neutral";
+  }
+
+  if (scorePercent > PERFORMANCE_BAND_THRESHOLDS.blueAbove) {
+    return "blue";
+  }
+
+  if (scorePercent >= PERFORMANCE_BAND_THRESHOLDS.greenAtLeast) {
+    return "green";
+  }
+
+  if (scorePercent >= PERFORMANCE_BAND_THRESHOLDS.yellowAtLeast) {
+    return "yellow";
+  }
+
+  return "red";
+}
+
+export function getLevelScorePercent(
+  userLevelActions: number | null | undefined,
+  baselineLevelActions: number | null | undefined,
+): number | null {
+  if (
+    userLevelActions == null ||
+    baselineLevelActions == null ||
+    !Number.isFinite(userLevelActions) ||
+    !Number.isFinite(baselineLevelActions)
+  ) {
+    return null;
+  }
+
+  const normalizedUserActions = Math.max(0, Math.trunc(userLevelActions));
+  const normalizedBaselineActions = Math.max(
+    0,
+    Math.trunc(baselineLevelActions),
+  );
+  if (normalizedUserActions <= 0 || normalizedBaselineActions <= 0) {
+    return null;
+  }
+
+  return Math.round((normalizedBaselineActions / normalizedUserActions) * 100);
+}
+
+export interface PostGameLevelMetric {
+  level: number;
+  band: PostGameBand;
+}
+
+export interface PostGameStats {
+  outcome: PostGameOutcome;
+  headline: string;
+  detail: string;
+  countedActions: number;
+  baselineActions: number | null;
+  deltaActions: number | null;
+  scorePercent: number | null;
+  levelsCompleted: number;
+  winLevels: number;
+  levelMetrics: PostGameLevelMetric[];
+  shareText: string;
 }
 
 export interface HelpLink {
@@ -52,6 +127,7 @@ export interface FirmwareModel {
   scene: SceneKind;
   daily: DailyPuzzle | null;
   session: SessionSnapshot | null;
+  postGame: PostGameStats | null;
   hoverPoint: HoverPoint | null;
   clickPoint: HoverPoint | null;
   busy: boolean;

@@ -1,10 +1,6 @@
 import type { ActionName } from "../../lib/api";
-import { drawText } from "../font";
-import {
-  clearFramebuffer,
-  createFramebuffer,
-  strokeRect,
-} from "../framebuffer";
+import { drawTextCenter } from "../font";
+import { blitSprite, createFramebuffer, strokeRect } from "../framebuffer";
 import {
   findHotspot,
   getNextHelpSelection,
@@ -15,9 +11,14 @@ import {
   type InteractiveRegion,
 } from "../os";
 import { UI_COLORS } from "../palette";
+import { SPRITE_ABOUT } from "../sprites";
 import type { SceneContext, SceneModule } from "./base";
 
 const MENU_ITEMS: readonly HelpLink[] = [{ id: "back", label: "BACK" }];
+
+const GITHUB_URL = "https://github.com/preyneyv/arcaptcha";
+const ARC_AGI_URL = "https://arcprize.org/arc-agi/3";
+const LICENSES_URL = "/THIRD_PARTY_LICENSES.txt";
 
 function createControlState(defaultValue: boolean = false): ControlState {
   return {
@@ -78,6 +79,8 @@ export class AboutSceneModule implements SceneModule {
     const hotspot = findHotspot(frame.hotspots, point.x, point.y);
     if (hotspot?.kind === "action") {
       await context.activateMenuAction(hotspot.action);
+    } else if (hotspot?.kind === "link" && hotspot.href) {
+      window.open(hotspot.href, "_blank", "noopener");
     }
   }
 
@@ -89,31 +92,42 @@ export class AboutSceneModule implements SceneModule {
         id: "back",
         kind: "action",
         action: "back",
-        x: 42,
-        y: 119,
-        width: 44,
-        height: 13,
+        x: 51,
+        y: 123,
+        width: 27,
+        height: 11,
+      },
+      {
+        id: "arc-agi-3",
+        kind: "link",
+        href: ARC_AGI_URL,
+        x: 47,
+        y: 28,
+        width: 43,
+        height: 10,
+      },
+      {
+        id: "github",
+        kind: "link",
+        href: GITHUB_URL,
+        x: 12,
+        y: 98,
+        width: 28,
+        height: 10,
+      },
+      {
+        id: "licenses",
+        kind: "link",
+        href: LICENSES_URL,
+        x: 78,
+        y: 98,
+        width: 38,
+        height: 10,
       },
     ];
 
-    clearFramebuffer(framebuffer, UI_COLORS.background);
-    strokeRect(framebuffer, 0, 0, 128, 140, UI_COLORS.border);
-    drawText(framebuffer, 44, 8, "ABOUT", UI_COLORS.text, "large");
-    drawText(framebuffer, 18, 52, "BLANK SCREEN", UI_COLORS.textMuted, "large");
-    drawText(framebuffer, 43, 121, "BACK", UI_COLORS.text, "large");
-
-    const selectedHotspot =
-      hotspots[this.selection ?? 0] ?? hotspots[0] ?? null;
-    if (selectedHotspot) {
-      strokeRect(
-        framebuffer,
-        selectedHotspot.x,
-        selectedHotspot.y,
-        selectedHotspot.width,
-        selectedHotspot.height,
-        UI_COLORS.selection,
-      );
-    }
+    blitSprite(framebuffer, SPRITE_ABOUT);
+    drawTextCenter(framebuffer, 64, 125, "BACK", 14, "large");
 
     const hoveredHotspot =
       model.hoverPoint === null

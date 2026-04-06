@@ -191,6 +191,35 @@ export function drawText(
   }
 }
 
+export function drawTextRight(
+  framebuffer: Framebuffer,
+  right: number,
+  y: number,
+  text: string,
+  color: number,
+  size: FontSize = "large",
+): void {
+  drawText(framebuffer, right - measureText(text, size), y, text, color, size);
+}
+
+export function drawTextCenter(
+  framebuffer: Framebuffer,
+  x: number,
+  y: number,
+  text: string,
+  color: number,
+  size: FontSize = "large",
+): void {
+  drawText(
+    framebuffer,
+    x - Math.floor(measureText(text, size) / 2),
+    y,
+    text,
+    color,
+    size,
+  );
+}
+
 export function wrapText(
   text: string,
   maxWidth: number,

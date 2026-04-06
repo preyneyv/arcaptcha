@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Sequence
 
@@ -10,6 +11,8 @@ from arc_agi import Arcade
 from .app import create_app
 from .catalog import GameCatalog
 from .config import AppConfig
+
+LOGGER = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,15 +41,30 @@ def main(argv: Sequence[str] | None = None) -> None:
             environments_dir=str(config.environments_dir),
             recordings_dir=str(config.recordings_dir),
         )
+        environments = ()
+        try:
+            environments = tuple(arcade.get_environments())
+        except Exception as error:
+            LOGGER.warning(
+                "failed to fetch available games for daily output: %s", error
+            )
+
+        if environments:
+            GameCatalog.write_from_environments(
+                config.catalog_path,
+                environments,
+                season_name="arc-agi",
+            )
+
         catalog = GameCatalog.load(config.catalog_path)
         now = datetime.now(timezone.utc)
         scheduled = catalog.current(now, config.season_start)
-        environment = catalog.environment_index(arcade.get_environments()).get(
+        environment = catalog.environment_index(environments).get(
             scheduled.entry.game_id
         )
         print(
             json.dumps(
-                scheduled.to_payload(environment, now, config.reveal_hour_utc),
+                scheduled.to_payload(environment),
                 indent=2,
             )
         )

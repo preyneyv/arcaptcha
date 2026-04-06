@@ -63,7 +63,6 @@ class AppConfig:
     port: int
     debug: bool
     archive_window_days: int
-    reveal_hour_utc: int
 
     @property
     def environments_dir(self) -> Path:
@@ -76,8 +75,6 @@ class AppConfig:
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "AppConfig":
         root = project_root or PROJECT_ROOT
-        reveal_hour_utc = _read_int("ARCAPTCHA_REVEAL_HOUR_UTC", 0)
-        reveal_hour_utc = min(max(reveal_hour_utc, 0), 23)
 
         return cls(
             project_root=root,
@@ -96,5 +93,4 @@ class AppConfig:
                 7,
                 _read_int("ARCAPTCHA_ARCHIVE_WINDOW_DAYS", 45),
             ),
-            reveal_hour_utc=reveal_hour_utc,
         )

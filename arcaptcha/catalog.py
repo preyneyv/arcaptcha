@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -22,37 +22,23 @@ def _sort_key(environment: EnvironmentInfo) -> datetime:
 @dataclass(frozen=True, slots=True)
 class CatalogEntry:
     game_id: str
-    label: str | None = None
-    optimal_action_count: int | None = None
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "CatalogEntry":
-        return cls(
-            game_id=normalize_game_id(str(raw["game_id"])),
-            label=raw.get("label"),
-            optimal_action_count=raw.get("optimal_action_count"),
+    def from_raw(cls, raw: Any) -> "CatalogEntry":
+        if isinstance(raw, str):
+            return cls(game_id=normalize_game_id(raw))
+
+        if isinstance(raw, dict) and "game_id" in raw:
+            return cls(game_id=normalize_game_id(str(raw["game_id"])))
+
+        raise ValueError(
+            "catalog entry must be a game id string or object with game_id"
         )
 
-    def resolve_title(self, environment: EnvironmentInfo | None) -> str:
-        if self.label:
-            return self.label
-        if environment and environment.title:
-            return environment.title
-        return self.game_id.upper()
-
-    def reference_action_count(self, environment: EnvironmentInfo | None) -> int | None:
-        if self.optimal_action_count is not None:
-            return self.optimal_action_count
+    def baseline_actions(self, environment: EnvironmentInfo | None) -> list[int] | None:
         if environment and environment.baseline_actions:
-            return sum(environment.baseline_actions)
+            return [int(value) for value in environment.baseline_actions]
         return None
-
-    def reference_source(self, environment: EnvironmentInfo | None) -> str:
-        if self.optimal_action_count is not None:
-            return "catalog"
-        if environment and environment.baseline_actions:
-            return "baseline"
-        return "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,28 +46,17 @@ class ScheduledEntry:
     scheduled_date: date
     cycle: int
     day_index: int
-    season_name: str
     entry: CatalogEntry
 
     @property
     def is_replay(self) -> bool:
         return self.cycle > 1
 
-    def reveal_at(self, reveal_hour_utc: int) -> datetime:
-        return datetime.combine(
-            self.scheduled_date + timedelta(days=1),
-            time(hour=reveal_hour_utc, tzinfo=timezone.utc),
-        )
-
     def to_payload(
         self,
         environment: EnvironmentInfo | None,
-        now: datetime,
-        reveal_hour_utc: int,
     ) -> dict[str, Any]:
-        reference_action_count = self.entry.reference_action_count(environment)
-        reveal_at = self.reveal_at(reveal_hour_utc)
-        reference_revealed = now >= reveal_at
+        baseline_actions = self.entry.baseline_actions(environment)
 
         return {
             "date": self.scheduled_date.isoformat(),
@@ -89,19 +64,7 @@ class ScheduledEntry:
             "resolved_game_id": environment.game_id
             if environment
             else self.entry.game_id,
-            "title": self.entry.resolve_title(environment),
-            "cycle": self.cycle,
-            "day_index": self.day_index,
-            "is_replay": self.is_replay,
-            "is_available": environment is not None,
-            "season_name": self.season_name,
-            "reveal_at": reveal_at.isoformat(),
-            "reference_revealed": reference_revealed,
-            "reference_action_count": reference_action_count
-            if reference_revealed
-            else None,
-            "reference_source": self.entry.reference_source(environment),
-            "tags": list(environment.tags or []) if environment else [],
+            "baseline_actions": baseline_actions,
         }
 
 
@@ -110,10 +73,57 @@ class GameCatalog:
     season_name: str
     entries: tuple[CatalogEntry, ...]
 
+    @staticmethod
+    def normalize_ids(game_ids: Iterable[str]) -> list[str]:
+        return sorted(
+            {
+                normalize_game_id(game_id)
+                for game_id in game_ids
+                if isinstance(game_id, str) and game_id
+            }
+        )
+
+    @classmethod
+    def write_game_ids(
+        cls,
+        path: Path,
+        game_ids: Iterable[str],
+        season_name: str,
+    ) -> None:
+        normalized = cls.normalize_ids(game_ids)
+        if not normalized:
+            raise ValueError("cannot write an empty catalog")
+
+        payload = {
+            "season_name": season_name,
+            "entries": normalized,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def write_from_environments(
+        cls,
+        path: Path,
+        environments: Iterable[EnvironmentInfo],
+        season_name: str,
+    ) -> None:
+        cls.write_game_ids(
+            path,
+            (environment.game_id for environment in environments),
+            season_name,
+        )
+
     @classmethod
     def load(cls, path: Path) -> "GameCatalog":
         raw = json.loads(path.read_text(encoding="utf-8"))
-        entries = tuple(CatalogEntry.from_dict(item) for item in raw["entries"])
+        entries = tuple(CatalogEntry.from_raw(item) for item in raw["entries"])
+        if not entries:
+            raise ValueError("catalog must contain at least one game")
+
         return cls(
             season_name=str(raw.get("season_name", "public-demo")), entries=entries
         )
@@ -150,7 +160,6 @@ class GameCatalog:
             scheduled_date=target_date,
             cycle=cycle_index + 1,
             day_index=position + 1,
-            season_name=self.season_name,
             entry=self.entries[position],
         )
 
@@ -159,7 +168,6 @@ class GameCatalog:
         now: datetime,
         season_start: date,
         environments: Iterable[EnvironmentInfo],
-        reveal_hour_utc: int,
         days_back: int,
         days_forward: int = 0,
     ) -> list[dict[str, Any]]:
@@ -174,8 +182,6 @@ class GameCatalog:
             payloads.append(
                 scheduled.to_payload(
                     environment_index.get(scheduled.entry.game_id),
-                    now,
-                    reveal_hour_utc,
                 )
             )
             current += timedelta(days=1)

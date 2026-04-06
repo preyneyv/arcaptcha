@@ -27,17 +27,7 @@ export interface DailyPuzzle {
   date: string;
   gameId: string;
   resolvedGameId: string;
-  title: string;
-  cycle: number;
-  dayIndex: number;
-  isReplay: boolean;
-  isAvailable: boolean;
-  seasonName: string;
-  revealAt: string;
-  referenceRevealed: boolean;
-  referenceActionCount: number | null;
-  referenceSource: string;
-  tags: string[];
+  baselineActions: number[] | null;
 }
 
 export interface CommandFrame {
@@ -73,17 +63,7 @@ interface RawDailyPuzzle {
   date: string;
   game_id: string;
   resolved_game_id: string;
-  title: string;
-  cycle: number;
-  day_index: number;
-  is_replay: boolean;
-  is_available: boolean;
-  season_name: string;
-  reveal_at: string;
-  reference_revealed: boolean;
-  reference_action_count: number | null;
-  reference_source: string;
-  tags: string[];
+  baseline_actions: number[] | null;
 }
 
 interface RawCommandFrame {
@@ -145,17 +125,7 @@ function mapDailyPuzzle(raw: RawDailyPuzzle): DailyPuzzle {
     date: raw.date,
     gameId: raw.game_id,
     resolvedGameId: raw.resolved_game_id,
-    title: raw.title,
-    cycle: raw.cycle,
-    dayIndex: raw.day_index,
-    isReplay: raw.is_replay,
-    isAvailable: raw.is_available,
-    seasonName: raw.season_name,
-    revealAt: raw.reveal_at,
-    referenceRevealed: raw.reference_revealed,
-    referenceActionCount: raw.reference_action_count,
-    referenceSource: raw.reference_source,
-    tags: raw.tags,
+    baselineActions: raw.baseline_actions,
   };
 }
 
