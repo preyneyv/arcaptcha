@@ -6,6 +6,13 @@ import {
   type PlaySession,
 } from "../lib/api";
 import {
+  clearPersistedRunState,
+  readPersistedRunState,
+  writePersistedRunState,
+  type PersistedRunSessionState,
+  type PersistedRunState,
+} from "../lib/storage";
+import {
   GAMEPLAY_HEIGHT,
   SCREEN_HEIGHT,
   SCREEN_WIDTH,
@@ -56,6 +63,7 @@ interface RuntimeSession {
 
 interface FirmwareState {
   daily: DailyPuzzle | null;
+  lockedDailyDate: string | null;
   session: RuntimeSession | null;
   scene: SceneKind;
   booting: boolean;
@@ -92,6 +100,7 @@ export interface FirmwareApi {
   openPlaySession(
     gameId: string,
   ): Promise<{ session: PlaySession; frame: CommandFrame }>;
+  validatePlaySession(session: PlaySession): Promise<void>;
   sendAction(
     action: BackendActionName,
     session: PlaySession,
@@ -212,6 +221,58 @@ function toSessionSnapshot(
     levelsCompleted: session.levelsCompleted,
     winLevels: session.winLevels,
     levelActionCounts: session.levelActionCounts,
+  };
+}
+
+function toPersistedRunSessionState(
+  session: RuntimeSession,
+): PersistedRunSessionState {
+  const levelsCompleted = Math.max(0, session.levelsCompleted);
+
+  return {
+    cardId: session.cardId,
+    gameId: session.gameId,
+    guid: session.guid,
+    state: session.state,
+    availableActions: session.availableActions,
+    grid: session.grid,
+    countedActions: Math.max(1, session.countedActions),
+    levelsCompleted,
+    winLevels: Math.max(1, session.winLevels),
+    levelActionCounts: session.levelActionCounts
+      .map((value) => Math.max(0, Math.trunc(value)))
+      .slice(0, levelsCompleted),
+    currentLevelStartActionCount: Math.max(
+      1,
+      Math.min(session.countedActions, session.currentLevelStartActionCount),
+    ),
+  };
+}
+
+function toRuntimeSessionFromPersisted(
+  persistedSession: PersistedRunSessionState,
+): RuntimeSession {
+  return {
+    cardId: persistedSession.cardId,
+    gameId: persistedSession.gameId,
+    guid: persistedSession.guid,
+    state: persistedSession.state,
+    frames: [],
+    grid: persistedSession.grid,
+    availableActions: persistedSession.availableActions,
+    countedActions: Math.max(1, persistedSession.countedActions),
+    levelsCompleted: Math.max(0, persistedSession.levelsCompleted),
+    winLevels: Math.max(1, persistedSession.winLevels),
+    levelActionCounts: persistedSession.levelActionCounts
+      .map((value) => Math.max(0, Math.trunc(value)))
+      .slice(0, Math.max(0, persistedSession.levelsCompleted)),
+    currentLevelStartActionCount: Math.max(
+      1,
+      Math.min(
+        Math.max(1, persistedSession.countedActions),
+        persistedSession.currentLevelStartActionCount,
+      ),
+    ),
   };
 }
 
@@ -503,6 +564,7 @@ export class Firmware {
 
   private state: FirmwareState = {
     daily: null,
+    lockedDailyDate: null,
     session: null,
     scene: "help",
     booting: true,
@@ -596,7 +658,12 @@ export class Firmware {
         this.state.daily &&
         !this.state.error
       ) {
-        void this.startSession({ revealScene: false });
+        const restored = await this.restorePersistedRun(lifecycle);
+        if (!this.isLifecycleCurrent(lifecycle) || restored) {
+          return;
+        }
+
+        await this.startSession({ revealScene: false });
       }
     })();
 
@@ -722,6 +789,135 @@ export class Firmware {
     return !this.disposed && this.lifecycleId === lifecycle;
   }
 
+  private isDailyLockedOut(): boolean {
+    const dailyDate = this.state.daily?.date;
+    return Boolean(dailyDate && this.state.lockedDailyDate === dailyDate);
+  }
+
+  private persistRunState(session: RuntimeSession | null): void {
+    const dailyDate = this.state.daily?.date;
+    if (!dailyDate) {
+      return;
+    }
+
+    const existing = readPersistedRunState();
+    if (!session) {
+      if (
+        existing &&
+        existing.dailyDate === dailyDate &&
+        existing.status === "in_progress"
+      ) {
+        clearPersistedRunState();
+      }
+      return;
+    }
+
+    const sessionState = toPersistedRunSessionState(session);
+    if (isPostGameSession(session)) {
+      writePersistedRunState({
+        version: 1,
+        dailyDate,
+        status: "completed",
+        session: sessionState,
+        completedAt: new Date().toISOString(),
+      });
+      this.state.lockedDailyDate = dailyDate;
+      return;
+    }
+
+    writePersistedRunState({
+      version: 1,
+      dailyDate,
+      status: "in_progress",
+      session: sessionState,
+    });
+  }
+
+  private async resumePersistedInProgressRun(
+    persisted: PersistedRunState,
+    lifecycle: number,
+  ): Promise<boolean> {
+    this.state.requestBusy = true;
+    this.renderAndEmit();
+
+    try {
+      await this.api.validatePlaySession({
+        cardId: persisted.session.cardId,
+        gameId: persisted.session.gameId,
+        guid: persisted.session.guid,
+      });
+      if (!this.isLifecycleCurrent(lifecycle)) {
+        return true;
+      }
+
+      const resumedSession = toRuntimeSessionFromPersisted(persisted.session);
+      if (
+        resumedSession.grid.length === 0 ||
+        resumedSession.availableActions.length === 0
+      ) {
+        clearPersistedRunState();
+        this.state.lockedDailyDate = null;
+        return false;
+      }
+
+      this.syncSession(resumedSession);
+      this.state.scene = getSceneForSession(resumedSession);
+      this.state.error = null;
+      this.renderAndEmit();
+      return true;
+    } catch (resumeError) {
+      if (!this.isLifecycleCurrent(lifecycle)) {
+        return true;
+      }
+
+      if (isSessionIdentityError(resumeError)) {
+        clearPersistedRunState();
+        this.state.lockedDailyDate = null;
+        return false;
+      }
+
+      this.state.error = getErrorMessage(resumeError);
+      this.renderAndEmit();
+      return true;
+    } finally {
+      if (this.isLifecycleCurrent(lifecycle)) {
+        this.state.requestBusy = false;
+        this.renderAndEmit();
+      }
+    }
+  }
+
+  private async restorePersistedRun(lifecycle: number): Promise<boolean> {
+    const dailyDate = this.state.daily?.date;
+    if (!dailyDate) {
+      return false;
+    }
+
+    const persisted = readPersistedRunState();
+    if (!persisted) {
+      this.state.lockedDailyDate = null;
+      return false;
+    }
+
+    if (persisted.dailyDate !== dailyDate) {
+      clearPersistedRunState();
+      this.state.lockedDailyDate = null;
+      return false;
+    }
+
+    if (persisted.status === "completed") {
+      const restoredSession = toRuntimeSessionFromPersisted(persisted.session);
+      this.syncSession(restoredSession);
+      this.state.lockedDailyDate = dailyDate;
+      this.state.scene = "win";
+      this.state.error = null;
+      this.renderAndEmit();
+      return true;
+    }
+
+    return this.resumePersistedInProgressRun(persisted, lifecycle);
+  }
+
   private canTrackHover(frame: FirmwareFrame = this.latestFrame): boolean {
     if (this.isInputLocked()) {
       return false;
@@ -762,6 +958,7 @@ export class Firmware {
     return {
       scene: this.state.scene,
       daily: this.state.daily,
+      dailyLocked: this.isDailyLockedOut(),
       session: toSessionSnapshot(this.state.session, this.state.displayGrid),
       postGame: toPostGameStats(this.state.session, this.state.daily),
       hoverPoint: this.getPointInteractivity(this.state.hoverPoint)
@@ -1079,6 +1276,16 @@ export class Firmware {
     const previousSession = this.state.session;
     this.state.session = nextSession;
 
+    if (
+      nextSession &&
+      isPostGameSession(nextSession) &&
+      this.state.daily?.date
+    ) {
+      this.state.lockedDailyDate = this.state.daily.date;
+    }
+
+    this.persistRunState(nextSession);
+
     const shouldStartInterLevelTransition =
       this.state.scene === "play" &&
       previousSession !== null &&
@@ -1129,6 +1336,13 @@ export class Firmware {
   private async startSession(options?: {
     revealScene?: boolean;
   }): Promise<void> {
+    if (this.isDailyLockedOut()) {
+      this.state.scene = "win";
+      this.state.error = null;
+      this.renderAndEmit();
+      return;
+    }
+
     if (!this.state.daily) {
       return;
     }
@@ -1213,6 +1427,12 @@ export class Firmware {
     extraData: Record<string, unknown> = {},
     options?: { revealScene?: boolean },
   ): Promise<void> {
+    if (this.isDailyLockedOut()) {
+      this.state.scene = "win";
+      this.renderAndEmit();
+      return;
+    }
+
     const activeSession = this.state.session;
     if (!activeSession) {
       await this.startSession();
@@ -1285,6 +1505,13 @@ export class Firmware {
   }
 
   private async resumeOrStart(): Promise<void> {
+    if (this.isDailyLockedOut()) {
+      this.state.scene = "win";
+      this.state.error = null;
+      this.renderAndEmit();
+      return;
+    }
+
     if (!this.state.session) {
       await this.startSession();
       return;
@@ -1298,6 +1525,13 @@ export class Firmware {
   private async resetSession(options?: {
     revealScene?: boolean;
   }): Promise<void> {
+    if (this.isDailyLockedOut()) {
+      this.state.scene = "win";
+      this.state.error = null;
+      this.renderAndEmit();
+      return;
+    }
+
     if (this.state.session) {
       await this.runGameAction("RESET", {}, options);
       return;

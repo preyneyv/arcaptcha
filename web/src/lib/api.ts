@@ -232,3 +232,14 @@ export async function openPlaySession(gameId: string): Promise<{
     frame,
   };
 }
+
+export async function validatePlaySession(session: PlaySession): Promise<void> {
+  const response = await fetch(
+    `/api/scorecard/${encodeURIComponent(session.cardId)}/${encodeURIComponent(session.gameId)}`,
+    {
+      headers: buildHeaders(),
+    },
+  );
+
+  await readJson<unknown>(response);
+}

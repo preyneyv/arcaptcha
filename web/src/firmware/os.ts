@@ -126,6 +126,7 @@ export type InteractiveRegion = {
 export interface FirmwareModel {
   scene: SceneKind;
   daily: DailyPuzzle | null;
+  dailyLocked: boolean;
   session: SessionSnapshot | null;
   postGame: PostGameStats | null;
   hoverPoint: HoverPoint | null;

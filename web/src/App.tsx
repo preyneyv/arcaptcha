@@ -17,6 +17,7 @@ import {
   fetchDailyPuzzle,
   openPlaySession,
   sendAction,
+  validatePlaySession,
   type ActionName,
 } from "./lib/api";
 import { getOrCreatePlayerId } from "./lib/storage";
@@ -24,6 +25,7 @@ import { getOrCreatePlayerId } from "./lib/storage";
 const FIRMWARE_API: FirmwareApi = {
   fetchDailyPuzzle,
   openPlaySession,
+  validatePlaySession,
   sendAction,
 };
 
