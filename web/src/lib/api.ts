@@ -81,6 +81,20 @@ interface RawGameInfo {
   game_id?: string;
 }
 
+const API_ROOT = normalizeApiRoot(import.meta.env.VITE_API_ROOT);
+
+function normalizeApiRoot(raw: string | undefined): string {
+  if (!raw) {
+    return "";
+  }
+
+  return raw.trim().replace(/\/+$/, "");
+}
+
+function buildApiUrl(path: string): string {
+  return API_ROOT ? `${API_ROOT}${path}` : path;
+}
+
 function buildHeaders(initHeaders?: HeadersInit): Headers {
   const headers = new Headers(initHeaders);
   headers.set("Content-Type", "application/json");
@@ -154,7 +168,7 @@ function mapFrame(raw: RawCommandFrame): CommandFrame {
 }
 
 export async function fetchDailyPuzzle(): Promise<DailyPuzzle> {
-  const response = await fetch("/api/arcaptcha/daily", {
+  const response = await fetch(buildApiUrl("/api/arcaptcha/daily"), {
     headers: buildHeaders(),
   });
   return mapDailyPuzzle(await readJson<RawDailyPuzzle>(response));
@@ -165,9 +179,12 @@ export async function resolveGameId(gameId: string): Promise<string> {
     return gameId;
   }
 
-  const response = await fetch(`/api/games/${encodeURIComponent(gameId)}`, {
-    headers: buildHeaders(),
-  });
+  const response = await fetch(
+    buildApiUrl(`/api/games/${encodeURIComponent(gameId)}`),
+    {
+      headers: buildHeaders(),
+    },
+  );
   const payload = await readJson<RawGameInfo>(response);
 
   return typeof payload.game_id === "string" && payload.game_id
@@ -176,7 +193,7 @@ export async function resolveGameId(gameId: string): Promise<string> {
 }
 
 export async function openScorecard(): Promise<{ cardId: string }> {
-  const response = await fetch("/api/scorecard/open", {
+  const response = await fetch(buildApiUrl("/api/scorecard/open"), {
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify({
@@ -203,7 +220,7 @@ export async function sendAction(
     payload.guid = session.guid;
   }
 
-  const response = await fetch(`/api/cmd/${action}`, {
+  const response = await fetch(buildApiUrl(`/api/cmd/${action}`), {
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify(payload),
@@ -235,7 +252,9 @@ export async function openPlaySession(gameId: string): Promise<{
 
 export async function validatePlaySession(session: PlaySession): Promise<void> {
   const response = await fetch(
-    `/api/scorecard/${encodeURIComponent(session.cardId)}/${encodeURIComponent(session.gameId)}`,
+    buildApiUrl(
+      `/api/scorecard/${encodeURIComponent(session.cardId)}/${encodeURIComponent(session.gameId)}`,
+    ),
     {
       headers: buildHeaders(),
     },

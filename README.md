@@ -41,6 +41,8 @@ npm run dev
 
 The frontend defaults to `http://127.0.0.1:5173` and proxies `/api` to the backend.
 
+Set `VITE_API_ROOT` at build or dev time when the browser should call a different API origin, for example `VITE_API_ROOT=https://api.arcaptcha.io npm run dev`.
+
 ## Useful commands
 
 Print the currently scheduled puzzle:
