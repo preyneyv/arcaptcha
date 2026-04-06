@@ -1,4 +1,5 @@
 import type { ActionName } from "../../lib/api";
+import { clearPersistedRunState } from "../../lib/storage";
 import { drawText, drawTextCenter, drawTextRight } from "../font";
 import {
   blitSprite,
@@ -31,6 +32,53 @@ const BAND_COLORS: Record<PostGameBand, number> = {
   neutral: 3,
 };
 
+function parseDailyDateToUtcMs(
+  dailyDate: string | null | undefined,
+): number | null {
+  if (!dailyDate) {
+    return null;
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dailyDate);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return null;
+  }
+
+  return Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0);
+}
+
+function formatCountdownMs(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600)
+    .toString()
+    .padStart(2, "0");
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+    .toString()
+    .padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function getResetCountdownLabel(dailyDate: string | null | undefined): string {
+  const nextResetUtcMs = parseDailyDateToUtcMs(dailyDate);
+  if (nextResetUtcMs === null) {
+    return "--:--:--";
+  }
+
+  return formatCountdownMs(nextResetUtcMs - Date.now());
+}
+
 function createControlState(defaultValue: boolean = false): ControlState {
   return {
     ACTION1: defaultValue,
@@ -48,6 +96,9 @@ function createControlState(defaultValue: boolean = false): ControlState {
 function buildWinControls(model: FirmwareModel): ControlState {
   const controls = createControlState(false);
   controls.HELP = true;
+  controls.ACTION6 = true;
+  controls.ACTION5 = true;
+
   controls.RESET = Boolean(model.daily) && !model.dailyLocked;
   return controls;
 }
@@ -66,7 +117,7 @@ function drawLevelHeatmap(
     stats.levelMetrics.length * tileSize +
     Math.max(0, stats.levelMetrics.length - 1) * tileGap;
   const startX = Math.max(4, Math.floor((SCREEN_WIDTH - totalWidth) / 2));
-  const y = 80;
+  const y = 79;
 
   stats.levelMetrics.forEach((metric, index) => {
     const x = startX + index * (tileSize + tileGap);
@@ -108,14 +159,16 @@ export class WinSceneModule implements SceneModule {
     clearFramebuffer(framebuffer, UI_COLORS.background);
 
     if (!stats) {
-      drawText(framebuffer, 22, 58, "POST GAME", UI_COLORS.text, "large");
-      drawText(framebuffer, 28, 72, "NO DATA", UI_COLORS.textMuted, "large");
+      clearPersistedRunState();
+      window.location.reload();
       return {
         framebuffer,
         controls: buildWinControls(model),
         hotspots: [],
         scene: "win",
       };
+      drawText(framebuffer, 22, 58, "POST GAME", UI_COLORS.text, "large");
+      drawText(framebuffer, 28, 72, "NO DATA", UI_COLORS.textMuted, "large");
     }
 
     blitSprite(
@@ -128,7 +181,7 @@ export class WinSceneModule implements SceneModule {
     drawText(
       framebuffer,
       4,
-      47,
+      48,
       `${stats.scorePercent}`,
       UI_COLORS.text,
       "large",
@@ -137,7 +190,7 @@ export class WinSceneModule implements SceneModule {
     drawTextCenter(
       framebuffer,
       64,
-      47,
+      48,
       `${stats.countedActions}`,
       UI_COLORS.text,
       "large",
@@ -146,94 +199,23 @@ export class WinSceneModule implements SceneModule {
     drawTextRight(
       framebuffer,
       128 - 4,
-      47,
+      48,
       `${stats.baselineActions}`,
       UI_COLORS.text,
       "large",
     );
 
-    blitSprite(framebuffer, SPRITE_RESULTS_FOOTER, 0, 71);
+    blitSprite(framebuffer, SPRITE_RESULTS_FOOTER, 0, 69);
     drawLevelHeatmap(framebuffer, stats);
 
-    // drawText(
-    //   framebuffer,
-    //   stats.outcome === "win" ? 28 : 34,
-    //   8,
-    //   stats.outcome === "win" ? "COMPLETE" : "FAILED",
-    //   UI_COLORS.text,
-    //   "large",
-    // );
-    // drawText(
-    //   framebuffer,
-    //   8,
-    //   24,
-    //   stats.detail.toUpperCase(),
-    //   UI_COLORS.textMuted,
-    //   "small",
-    // );
-
-    // drawText(
-    //   framebuffer,
-    //   8,
-    //   36,
-    //   `ACTIONS ${stats.countedActions}`,
-    //   UI_COLORS.text,
-    //   "large",
-    // );
-
-    // if (stats.baselineActions !== null) {
-    //   drawText(
-    //     framebuffer,
-    //     8,
-    //     46,
-    //     `BASELINE ${stats.baselineActions}`,
-    //     UI_COLORS.text,
-    //     "large",
-    //   );
-    // }
-
-    // if (stats.scorePercent !== null) {
-    //   drawText(
-    //     framebuffer,
-    //     8,
-    //     56,
-    //     `SCORE ${stats.scorePercent}%`,
-    //     UI_COLORS.text,
-    //     "large",
-    //   );
-    // }
-
-    // if (stats.deltaActions !== null) {
-    //   const deltaPrefix = stats.deltaActions > 0 ? "+" : "";
-    //   drawText(
-    //     framebuffer,
-    //     8,
-    //     66,
-    //     `DELTA ${deltaPrefix}${stats.deltaActions}`,
-    //     UI_COLORS.text,
-    //     "large",
-    //   );
-    // }
-
-    // drawText(
-    //   framebuffer,
-    //   8,
-    //   74,
-    //   `LEVELS ${stats.levelsCompleted}/${stats.winLevels}`,
-    //   UI_COLORS.text,
-    //   "small",
-    // );
-
-    // drawText(
-    //   framebuffer,
-    //   8,
-    //   98,
-    //   "SHARE STRING READY",
-    //   UI_COLORS.textMuted,
-    //   "small",
-    // );
-    // drawText(framebuffer, 8, 108, "HELP MENU", UI_COLORS.textMuted, "small");
-    // drawText(framebuffer, 8, 118, "RESET RETRY", UI_COLORS.textMuted, "small");
+    drawTextRight(
+      framebuffer,
+      128 - 4,
+      109,
+      getResetCountdownLabel(model.daily?.date),
+      UI_COLORS.text,
+      "large",
+    );
 
     return {
       framebuffer,

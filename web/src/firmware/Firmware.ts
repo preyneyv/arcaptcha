@@ -590,6 +590,7 @@ export class Firmware {
   private interLevelTransitionTimerId: number | null = null;
   private interLevelTransitionFrom: Framebuffer | null = null;
   private interLevelTransitionStartMs = 0;
+  private winCountdownTimerId: number | null = null;
   private pendingInterLevelTransitionFrom: Framebuffer | null = null;
   private pendingInterLevelTransitionAfterPlayback = false;
   private disposed = false;
@@ -684,6 +685,7 @@ export class Firmware {
     this.stopClickPulse();
     this.stopSceneTransition();
     this.stopInterLevelTransition();
+    this.stopWinCountdown();
     this.state.requestBusy = false;
 
     for (const eventName of Object.keys(this.listeners) as Array<
@@ -1255,8 +1257,42 @@ export class Firmware {
     nextFrame = this.applyInterLevelTransition(nextFrame);
 
     this.latestFrame = nextFrame;
+    this.syncWinCountdown(this.latestFrame.scene === "win");
     this.snapshot = this.buildSnapshot(this.latestFrame);
     this.emit("snapshot", this.snapshot);
+  }
+
+  private startWinCountdown(): void {
+    if (this.winCountdownTimerId !== null) {
+      return;
+    }
+
+    this.winCountdownTimerId = this.scheduler.setInterval(() => {
+      if (this.disposed) {
+        return;
+      }
+
+      if (this.latestFrame.scene !== "win") {
+        this.stopWinCountdown();
+        return;
+      }
+
+      this.renderAndEmit();
+    }, 1000);
+  }
+
+  private stopWinCountdown(): void {
+    this.scheduler.clearInterval(this.winCountdownTimerId);
+    this.winCountdownTimerId = null;
+  }
+
+  private syncWinCountdown(shouldRun: boolean): void {
+    if (shouldRun) {
+      this.startWinCountdown();
+      return;
+    }
+
+    this.stopWinCountdown();
   }
 
   private stopPlayback(): void {
