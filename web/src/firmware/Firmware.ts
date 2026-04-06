@@ -64,6 +64,7 @@ export interface FirmwareBusyState {
 export interface FirmwareSnapshot {
   framebuffer: Framebuffer;
   controls: ControlState;
+  screenInteractive: boolean;
   scene: SceneKind;
   busy: FirmwareBusyState;
   error: string | null;
@@ -453,6 +454,10 @@ export class Firmware {
         );
         return;
       }
+      if (hotspot?.kind === "callback") {
+        hotspot.callback();
+        return;
+      }
 
       await this.resumeOrStart();
       return;
@@ -490,40 +495,41 @@ export class Firmware {
     });
   }
 
-  setHoverPoint(point: HoverPoint | null): void {
+  setHoverPoint(point: HoverPoint | null): boolean {
     if (this.disposed) {
-      return;
+      return false;
     }
 
-    if (!this.isHoverEnabled()) {
+    if (!this.canTrackHover()) {
       if (this.state.hoverPoint === null) {
-        return;
+        return false;
       }
 
       this.state.hoverPoint = null;
       this.renderAndEmit();
-      return;
+      return false;
     }
 
     if (point === null) {
       if (this.state.hoverPoint === null) {
-        return;
+        return false;
       }
 
       this.state.hoverPoint = null;
       this.renderAndEmit();
-      return;
+      return false;
     }
 
     if (
       this.state.hoverPoint?.x === point.x &&
       this.state.hoverPoint.y === point.y
     ) {
-      return;
+      return this.getPointInteractivity(point, this.latestFrame);
     }
 
     this.state.hoverPoint = point;
     this.renderAndEmit();
+    return this.snapshot.screenInteractive;
   }
 
   private emit<E extends keyof FirmwareEventMap>(
@@ -543,19 +549,31 @@ export class Firmware {
     return !this.disposed && this.lifecycleId === lifecycle;
   }
 
-  private isHoverEnabled(): boolean {
-    return (
-      this.state.scene === "play" &&
-      !this.isInputLocked() &&
-      !this.state.error &&
-      Boolean(this.state.session?.availableActions.includes("ACTION6"))
-    );
+  private canTrackHover(frame: FirmwareFrame = this.latestFrame): boolean {
+    if (this.isInputLocked()) {
+      return false;
+    }
+
+    if (frame.scene === "play") {
+      return frame.controls.ACTION6;
+    }
+
+    return frame.hotspots.length > 0;
   }
 
-  private normalizeTransientState(): void {
-    if (!this.isHoverEnabled()) {
-      this.state.hoverPoint = null;
+  private getPointInteractivity(
+    point: HoverPoint | null,
+    frame: FirmwareFrame = this.latestFrame,
+  ): boolean {
+    if (!point || this.isInputLocked()) {
+      return false;
     }
+
+    if (frame.scene === "play" && frame.controls.ACTION6) {
+      return point.y < GAMEPLAY_HEIGHT;
+    }
+
+    return findHotspot(frame.hotspots, point.x, point.y) !== null;
   }
 
   private buildBusyState(): FirmwareBusyState {
@@ -572,7 +590,9 @@ export class Firmware {
       scene: this.state.scene,
       daily: this.state.daily,
       session: toSessionSnapshot(this.state.session, this.state.displayGrid),
-      hoverPoint: this.isHoverEnabled() ? this.state.hoverPoint : null,
+      hoverPoint: this.getPointInteractivity(this.state.hoverPoint)
+        ? this.state.hoverPoint
+        : null,
       clickPoint: this.state.clickPoint,
       busy: this.isInputLocked(),
       startedOnce: this.state.startedOnce,
@@ -587,6 +607,10 @@ export class Firmware {
     return {
       framebuffer: frame.framebuffer,
       controls: frame.controls,
+      screenInteractive: this.getPointInteractivity(
+        this.state.hoverPoint,
+        frame,
+      ),
       scene: frame.scene,
       busy: this.buildBusyState(),
       error: this.state.error,
@@ -598,8 +622,13 @@ export class Firmware {
       return;
     }
 
-    this.normalizeTransientState();
-    this.latestFrame = renderFirmware(this.buildModel());
+    let nextFrame = renderFirmware(this.buildModel());
+    if (this.state.hoverPoint && !this.canTrackHover(nextFrame)) {
+      this.state.hoverPoint = null;
+      nextFrame = renderFirmware(this.buildModel());
+    }
+
+    this.latestFrame = nextFrame;
     this.snapshot = this.buildSnapshot(this.latestFrame);
     this.emit("snapshot", this.snapshot);
   }

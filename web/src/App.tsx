@@ -226,6 +226,7 @@ export default function App() {
           controls={snapshot.controls}
           inputLocked={snapshot.busy.inputLocked}
           pressedState={consolePressed}
+          screenInteractive={snapshot.screenInteractive}
           onAction={(action) => void firmware.dispatchAction(action)}
           onHoverPointChange={(point) => firmware.setHoverPoint(point)}
           onScreenPress={(x, y) => void firmware.pressScreen({ x, y })}

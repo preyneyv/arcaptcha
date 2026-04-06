@@ -16,3 +16,5 @@ web/dist/
 # ARC toolkit runtime downloads
 environment_files/
 recordings/
+
+aseprite/*

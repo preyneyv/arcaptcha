@@ -2,6 +2,7 @@ import type { ActionName, DailyPuzzle } from "../lib/api";
 import { drawText, getLineHeight, measureText, wrapText } from "./font";
 import {
   blitArcGrid,
+  blitSprite,
   clearFramebuffer,
   createFramebuffer,
   drawGridCursor,
@@ -14,6 +15,7 @@ import {
   type Framebuffer,
 } from "./framebuffer";
 import { UI_COLORS } from "./palette";
+import { SPIRTE_PLAY, SPRITE_CONTROLS_DISABLED, SPRITE_LOGO } from "./sprites";
 
 export type SceneKind = "help" | "play" | "win" | "error";
 
@@ -49,15 +51,16 @@ export interface ControlState {
   RESET: boolean;
 }
 
-export interface InteractiveRegion {
+export type InteractiveRegion = {
   id: string;
-  kind: "link";
-  href?: string | null;
   x: number;
   y: number;
   width: number;
   height: number;
-}
+} & (
+  | { kind: "link"; href?: string | null }
+  | { kind: "callback"; callback: () => void }
+);
 
 export interface FirmwareModel {
   scene: SceneKind;
@@ -246,83 +249,114 @@ function renderHelpScene(model: FirmwareModel): FirmwareFrame {
   const linkLineHeight = getLineHeight("large");
 
   clearFramebuffer(framebuffer, UI_COLORS.background);
-  strokeRect(framebuffer, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, UI_COLORS.border);
-  fillRect(framebuffer, 0, 0, SCREEN_WIDTH, 10, UI_COLORS.selection);
-  drawText(framebuffer, 4, 1, "ARCAPTCHA", UI_COLORS.textInverse, "large");
 
-  drawText(framebuffer, 4, 14, "DAILY ARC PUZZLE", UI_COLORS.text, "large");
-  drawText(
-    framebuffer,
-    4,
-    23,
-    `DAY ${model.daily?.gameId ?? "SYNC"}`,
-    UI_COLORS.textMuted,
-    "large",
-  );
+  blitSprite(framebuffer, SPRITE_LOGO);
+  blitSprite(framebuffer, SPRITE_CONTROLS_DISABLED, 16, 57);
 
-  titleLines.forEach((line, index) => {
-    drawText(
-      framebuffer,
-      4,
-      32 + index * largeLineHeight,
-      line,
-      UI_COLORS.text,
-      "large",
-    );
+  blitSprite(framebuffer, SPIRTE_PLAY, 37, 100);
+  hotspots.push({
+    id: "play",
+    kind: "callback",
+    callback: () => {
+      console.log("Play button clicked");
+    },
+    x: 35,
+    y: 98,
+    width: SPIRTE_PLAY.width + 4,
+    height: SPIRTE_PLAY.height + 4,
   });
 
-  drawText(framebuffer, 4, 50, "ENABLED", UI_COLORS.textMuted, "large");
-  controlLines.forEach((line, index) => {
-    drawText(
-      framebuffer,
-      4,
-      59 + index * largeLineHeight,
-      line,
-      UI_COLORS.text,
-      "large",
-    );
+  drawText(framebuffer, 50, 125, "ABOUT", UI_COLORS.textMuted, "large");
+  hotspots.push({
+    id: "about",
+    kind: "callback",
+    callback: () => {
+      console.log("About button clicked");
+    },
+    x: 48,
+    y: 123,
+    width: 33,
+    height: 11,
   });
 
-  const promptColor = model.blinkVisible ? UI_COLORS.text : UI_COLORS.textMuted;
-  drawText(framebuffer, 4, 94, "PRESS ANY BUTTON", promptColor, "large");
-  drawText(framebuffer, 4, 103, prompt, promptColor, "large");
+  // titleLines.forEach((line, index) => {
+  //   drawText(
+  //     framebuffer,
+  //     4,
+  //     32 + index * largeLineHeight,
+  //     line,
+  //     UI_COLORS.text,
+  //     "large",
+  //   );
+  // });
 
-  drawText(framebuffer, 4, 114, "LINKS", UI_COLORS.textMuted, "large");
-  model.helpLinks.forEach((link, index) => {
-    const y = 123 + index * linkLineHeight;
-    const isSelected = model.helpSelection === index;
-    if (isSelected) {
-      fillRect(
-        framebuffer,
-        2,
-        y - 1,
-        SCREEN_WIDTH - 4,
-        linkLineHeight,
-        UI_COLORS.selection,
-      );
-    }
-    drawText(
+  // drawText(framebuffer, 4, 50, "ENABLED", UI_COLORS.textMuted, "large");
+  // controlLines.forEach((line, index) => {
+  //   drawText(
+  //     framebuffer,
+  //     4,
+  //     59 + index * largeLineHeight,
+  //     line,
+  //     UI_COLORS.text,
+  //     "large",
+  //   );
+  // });
+
+  // const promptColor = model.blinkVisible ? UI_COLORS.text : UI_COLORS.textMuted;
+  // drawText(framebuffer, 4, 94, "PRESS ANY BUTTON", promptColor, "large");
+  // drawText(framebuffer, 4, 103, prompt, promptColor, "large");
+
+  // drawText(framebuffer, 4, 114, "LINKS", UI_COLORS.textMuted, "large");
+  // model.helpLinks.forEach((link, index) => {
+  //   const y = 123 + index * linkLineHeight;
+  //   const isSelected = model.helpSelection === index;
+  //   if (isSelected) {
+  //     fillRect(
+  //       framebuffer,
+  //       2,
+  //       y - 1,
+  //       SCREEN_WIDTH - 4,
+  //       linkLineHeight,
+  //       UI_COLORS.selection,
+  //     );
+  //   }
+  //   drawText(
+  //     framebuffer,
+  //     6,
+  //     y,
+  //     link.label,
+  //     isSelected
+  //       ? UI_COLORS.textInverse
+  //       : link.href
+  //         ? UI_COLORS.text
+  //         : UI_COLORS.textMuted,
+  //     "large",
+  //   );
+  //   hotspots.push({
+  //     id: link.id,
+  //     kind: "link",
+  //     href: link.href,
+  //     x: 2,
+  //     y: y - 1,
+  //     width: SCREEN_WIDTH - 4,
+  //     height: linkLineHeight,
+  //   });
+  // });
+
+  const hoveredHotspot =
+    model.hoverPoint === null
+      ? null
+      : findHotspot(hotspots, model.hoverPoint.x, model.hoverPoint.y);
+  if (hoveredHotspot) {
+    strokeRect(
       framebuffer,
-      6,
-      y,
-      link.label,
-      isSelected
-        ? UI_COLORS.textInverse
-        : link.href
-          ? UI_COLORS.text
-          : UI_COLORS.textMuted,
-      "large",
+      hoveredHotspot.x,
+      hoveredHotspot.y,
+      hoveredHotspot.width,
+      hoveredHotspot.height,
+      UI_COLORS.warning,
     );
-    hotspots.push({
-      id: link.id,
-      kind: "link",
-      href: link.href,
-      x: 2,
-      y: y - 1,
-      width: SCREEN_WIDTH - 4,
-      height: linkLineHeight,
-    });
-  });
+  }
 
   return {
     framebuffer,

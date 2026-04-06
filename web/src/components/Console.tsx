@@ -44,18 +44,24 @@ function clamp(value: number, minimum: number, maximum: number): number {
 
 function ConsoleScreen({
   canvasRef,
-  clickable,
+  action6Available,
   inputLocked,
+  screenInteractive,
   onHoverPointChange,
   onScreenPress,
 }: {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  clickable: boolean;
+  action6Available: boolean;
   inputLocked: boolean;
-  onHoverPointChange: (point: HoverPoint | null) => void;
+  screenInteractive: boolean;
+  onHoverPointChange: (point: HoverPoint | null) => boolean;
   onScreenPress: (x: number, y: number) => void;
 }) {
-  const hoverEnabled = clickable && !inputLocked;
+  const [hoverInteractive, setHoverInteractive] = useState(screenInteractive);
+
+  useEffect(() => {
+    setHoverInteractive(screenInteractive);
+  }, [screenInteractive]);
 
   const getScreenPoint = useCallback(
     (element: HTMLCanvasElement, clientX: number, clientY: number) => {
@@ -76,12 +82,13 @@ function ConsoleScreen({
   );
 
   const clearHoveredPoint = useCallback(() => {
+    setHoverInteractive(false);
     onHoverPointChange(null);
   }, [onHoverPointChange]);
 
   const updateHoveredPoint = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
-      if (!hoverEnabled) {
+      if (inputLocked) {
         clearHoveredPoint();
         return;
       }
@@ -92,13 +99,13 @@ function ConsoleScreen({
         event.clientY,
       );
 
-      onHoverPointChange(screenPoint);
+      setHoverInteractive(onHoverPointChange(screenPoint));
     },
-    [clearHoveredPoint, getScreenPoint, hoverEnabled, onHoverPointChange],
+    [clearHoveredPoint, getScreenPoint, inputLocked, onHoverPointChange],
   );
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!hoverEnabled) {
+    if (inputLocked) {
       return;
     }
 
@@ -115,7 +122,7 @@ function ConsoleScreen({
       <canvas
         ref={canvasRef}
         className="console-screen-canvas"
-        data-clickable={clickable}
+        data-clickable={hoverInteractive}
         width={SCREEN_WIDTH}
         height={SCREEN_HEIGHT}
         onPointerDown={handlePointerDown}
@@ -132,7 +139,7 @@ function ConsoleScreen({
         draggable={false}
       />
       <img
-        src={clickable ? clickActive : clickInactive}
+        src={action6Available ? clickActive : clickInactive}
         className="console-screen-clickable-indicator"
         alt=""
         draggable={false}
@@ -355,6 +362,7 @@ export function Console({
   controls,
   inputLocked,
   pressedState,
+  screenInteractive,
   onAction,
   onHoverPointChange,
   onScreenPress,
@@ -363,8 +371,9 @@ export function Console({
   controls: ControlState;
   inputLocked: boolean;
   pressedState: ConsolePressedState;
+  screenInteractive: boolean;
   onAction: (action: ActionName) => void;
-  onHoverPointChange: (point: HoverPoint | null) => void;
+  onHoverPointChange: (point: HoverPoint | null) => boolean;
   onScreenPress: (x: number, y: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -408,8 +417,9 @@ export function Console({
         <div className="console-content">
           <ConsoleScreen
             canvasRef={canvasRef}
-            clickable={controls.ACTION6}
+            action6Available={controls.ACTION6}
             inputLocked={inputLocked}
+            screenInteractive={screenInteractive}
             onHoverPointChange={onHoverPointChange}
             onScreenPress={onScreenPress}
           />

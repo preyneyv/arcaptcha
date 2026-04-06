@@ -1,4 +1,5 @@
 import { ARC_RGBA_PALETTE, UI_COLORS } from "./palette";
+import { Sprite } from "./sprites";
 
 export const SCREEN_WIDTH = 128;
 export const SCREEN_HEIGHT = 140;
@@ -73,6 +74,30 @@ export function strokeRect(
   for (let row = y; row < y + height; row += 1) {
     setPixel(framebuffer, x, row, color);
     setPixel(framebuffer, x + width - 1, row, color);
+  }
+}
+
+export function blitSprite(
+  framebuffer: Framebuffer,
+  sprite: Sprite,
+  offsetX: number = 0,
+  offsetY: number = 0,
+  remap: Record<number, number> = {},
+): void {
+  const rows = sprite.height;
+  const columns = sprite.width;
+
+  if (rows === 0 || columns === 0) {
+    return;
+  }
+
+  for (let y = 0; y < rows; y += 1) {
+    const row = sprite.data[y] ?? [];
+    for (let x = 0; x < columns; x += 1) {
+      const sourceColor = row[x];
+      const color = remap[sourceColor] ?? sourceColor;
+      framebuffer[(offsetY + y) * SCREEN_WIDTH + (offsetX + x)] = color;
+    }
   }
 }
 
