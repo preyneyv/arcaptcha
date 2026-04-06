@@ -13,7 +13,6 @@ import {
   type FirmwareApi,
   type FirmwareSnapshot,
 } from "./firmware/Firmware";
-import type { HelpLink } from "./firmware/os";
 import {
   fetchDailyPuzzle,
   openPlaySession,
@@ -21,11 +20,6 @@ import {
   type ActionName,
 } from "./lib/api";
 import { getOrCreatePlayerId } from "./lib/storage";
-
-const HELP_LINKS: HelpLink[] = [
-  { id: "author", label: "AUTHOR", href: undefined },
-  { id: "github", label: "GITHUB", href: undefined },
-];
 
 const FIRMWARE_API: FirmwareApi = {
   fetchDailyPuzzle,
@@ -124,7 +118,6 @@ export default function App() {
     () =>
       new Firmware({
         api: FIRMWARE_API,
-        helpLinks: HELP_LINKS,
         ensurePlayerId: getOrCreatePlayerId,
       }),
   );
@@ -142,15 +135,11 @@ export default function App() {
         setSnapshot(nextSnapshot);
       });
     });
-    const unsubscribeOpenUrl = firmware.on("open-url", ({ href }) => {
-      window.open(href, "_blank", "noopener,noreferrer");
-    });
 
     void firmware.boot();
 
     return () => {
       unsubscribeSnapshot();
-      unsubscribeOpenUrl();
       firmware.dispose();
     };
   }, [firmware]);

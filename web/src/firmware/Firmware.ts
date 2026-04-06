@@ -7,22 +7,29 @@ import {
 } from "../lib/api";
 import {
   GAMEPLAY_HEIGHT,
-  GAMEPLAY_SCALE,
+  SCREEN_HEIGHT,
+  SCREEN_WIDTH,
   type Framebuffer,
 } from "./framebuffer";
 import {
   findHotspot,
-  getNextHelpSelection,
-  renderFirmware,
   type ControlState,
   type FirmwareFrame,
   type FirmwareModel,
-  type HelpLink,
   type HoverPoint,
   type MenuActionId,
   type SceneKind,
   type SessionSnapshot,
 } from "./os";
+import {
+  AboutSceneModule,
+  ErrorSceneModule,
+  HelpSceneModule,
+  PlaySceneModule,
+  WinSceneModule,
+  type SceneContext,
+  type SceneModule,
+} from "./scenes";
 
 type BackendActionName = Exclude<ActionName, "HELP">;
 
@@ -47,9 +54,6 @@ interface FirmwareState {
   requestBusy: boolean;
   playbackBusy: boolean;
   error: string | null;
-  startedOnce: boolean;
-  blinkVisible: boolean;
-  helpSelection: number | null;
   hoverPoint: HoverPoint | null;
   clickPoint: HoverPoint | null;
   displayGrid: number[][] | null;
@@ -73,7 +77,6 @@ export interface FirmwareSnapshot {
 
 export interface FirmwareEventMap {
   snapshot: FirmwareSnapshot;
-  "open-url": { href: string };
 }
 
 export interface FirmwareApi {
@@ -96,14 +99,14 @@ export interface FirmwareScheduler {
 }
 
 export interface FirmwareTimings {
-  blinkMs: number;
   framePlaybackMs: number;
   clickPulseMs: number;
+  sceneTransitionMs: number;
+  interLevelTransitionMs: number;
 }
 
 export interface FirmwareDeps {
   api: FirmwareApi;
-  helpLinks: readonly HelpLink[];
   ensurePlayerId?: () => string;
   scheduler?: FirmwareScheduler;
   timings?: Partial<FirmwareTimings>;
@@ -114,10 +117,14 @@ type FirmwareListeners = {
 };
 
 const DEFAULT_TIMINGS: FirmwareTimings = {
-  blinkMs: 320,
   framePlaybackMs: 1000 / 24,
   clickPulseMs: 140,
+  sceneTransitionMs: 220,
+  interLevelTransitionMs: 280,
 };
+
+const INTER_LEVEL_WIPE_COLOR = 14;
+const INTER_LEVEL_WIPE_BAND_ROWS = 3;
 
 const DEFAULT_SCHEDULER: FirmwareScheduler = {
   setTimeout: (fn, ms) => window.setTimeout(fn, ms),
@@ -133,10 +140,6 @@ const DEFAULT_SCHEDULER: FirmwareScheduler = {
     }
   },
 };
-
-function clampCoordinate(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -206,27 +209,19 @@ function getFrameSequence(session: RuntimeSession | null): number[][][] {
   return session.grid.length > 0 ? [session.grid] : [];
 }
 
-const MAIN_MENU_ITEMS: readonly HelpLink[] = [
-  { id: "play", label: "PLAY" },
-  { id: "about", label: "ABOUT" },
-];
-
-const ABOUT_MENU_ITEMS: readonly HelpLink[] = [{ id: "back", label: "BACK" }];
-
-function getHelpMenuAction(selection: number | null): MenuActionId {
-  return selection === 1 ? "about" : "play";
-}
-
 export class Firmware {
   private readonly api: FirmwareApi;
-  private readonly helpLinks: readonly HelpLink[];
   private readonly scheduler: FirmwareScheduler;
   private readonly timings: FirmwareTimings;
   private readonly ensurePlayerId?: () => string;
   private readonly listeners: FirmwareListeners = {
     snapshot: new Set(),
-    "open-url": new Set(),
   };
+  private readonly helpScene = new HelpSceneModule();
+  private readonly aboutScene = new AboutSceneModule();
+  private readonly playScene = new PlaySceneModule();
+  private readonly winScene = new WinSceneModule();
+  private readonly errorScene = new ErrorSceneModule();
 
   private state: FirmwareState = {
     daily: null,
@@ -236,9 +231,6 @@ export class Firmware {
     requestBusy: false,
     playbackBusy: false,
     error: null,
-    startedOnce: false,
-    blinkVisible: true,
-    helpSelection: 0,
     hoverPoint: null,
     clickPoint: null,
     displayGrid: null,
@@ -249,15 +241,22 @@ export class Firmware {
   private bootPromise: Promise<void> | null = null;
   private startSessionPromise: Promise<void> | null = null;
   private pendingSessionReveal = false;
-  private blinkTimerId: number | null = null;
   private playbackTimerId: number | null = null;
   private clickPulseTimerId: number | null = null;
+  private sceneTransitionTimerId: number | null = null;
+  private sceneTransitionFrom: Framebuffer | null = null;
+  private sceneTransitionTarget: SceneKind | null = null;
+  private sceneTransitionStartMs = 0;
+  private interLevelTransitionTimerId: number | null = null;
+  private interLevelTransitionFrom: Framebuffer | null = null;
+  private interLevelTransitionStartMs = 0;
+  private pendingInterLevelTransitionFrom: Framebuffer | null = null;
+  private pendingInterLevelTransitionAfterPlayback = false;
   private disposed = false;
   private lifecycleId = 0;
 
   constructor(deps: FirmwareDeps) {
     this.api = deps.api;
-    this.helpLinks = deps.helpLinks;
     this.ensurePlayerId = deps.ensurePlayerId;
     this.scheduler = deps.scheduler ?? DEFAULT_SCHEDULER;
     this.timings = {
@@ -265,7 +264,13 @@ export class Firmware {
       ...deps.timings,
     };
 
-    this.latestFrame = renderFirmware(this.buildModel());
+    this.helpScene.onEnter();
+    this.aboutScene.onEnter();
+    this.playScene.onEnter();
+    this.winScene.onEnter();
+    this.errorScene.onEnter();
+
+    this.latestFrame = this.renderCurrentScene(this.buildModel());
     this.snapshot = this.buildSnapshot(this.latestFrame);
   }
 
@@ -278,7 +283,6 @@ export class Firmware {
       return this.bootPromise;
     }
 
-    this.ensureBlinkTimer();
     this.renderAndEmit();
 
     const lifecycle = this.lifecycleId;
@@ -332,8 +336,9 @@ export class Firmware {
     this.startSessionPromise = null;
     this.pendingSessionReveal = false;
     this.stopPlayback();
-    this.stopBlinkTimer();
     this.stopClickPulse();
+    this.stopSceneTransition();
+    this.stopInterLevelTransition();
     this.state.requestBusy = false;
 
     for (const eventName of Object.keys(this.listeners) as Array<
@@ -367,171 +372,22 @@ export class Firmware {
       return;
     }
 
-    if (this.state.error) {
-      if (action === "RESET") {
-        await this.resetSession({ revealScene: true });
-        return;
-      }
-
-      this.enterHelpMenu(true);
-      return;
-    }
-
-    if (this.state.scene === "help") {
-      const canQueueSessionReveal =
-        this.isInputLocked() && this.startSessionPromise !== null;
-
-      if (
-        this.isInputLocked() &&
-        !canQueueSessionReveal &&
-        action !== "ACTION1" &&
-        action !== "ACTION2" &&
-        action !== "ACTION3" &&
-        action !== "ACTION4"
-      ) {
-        return;
-      }
-
-      if (action === "RESET") {
-        await this.resetSession({ revealScene: true });
-        return;
-      }
-
-      if (action === "ACTION1" || action === "ACTION3") {
-        this.state.helpSelection =
-          getNextHelpSelection(this.state.helpSelection, -1, MAIN_MENU_ITEMS) ??
-          0;
-        this.renderAndEmit();
-        return;
-      }
-
-      if (action === "ACTION2" || action === "ACTION4") {
-        this.state.helpSelection =
-          getNextHelpSelection(this.state.helpSelection, 1, MAIN_MENU_ITEMS) ??
-          0;
-        this.renderAndEmit();
-        return;
-      }
-
-      if (action === "ACTION5") {
-        await this.activateMenuAction(
-          getHelpMenuAction(this.state.helpSelection),
-        );
-        return;
-      }
-
-      return;
-    }
-
-    if (this.state.scene === "about") {
-      if (action === "RESET" || action === "ACTION5") {
-        await this.activateMenuAction("back");
-        return;
-      }
-
-      if (action === "ACTION1" || action === "ACTION3") {
-        this.state.helpSelection =
-          getNextHelpSelection(
-            this.state.helpSelection,
-            -1,
-            ABOUT_MENU_ITEMS,
-          ) ?? 0;
-        this.renderAndEmit();
-        return;
-      }
-
-      if (action === "ACTION2" || action === "ACTION4") {
-        this.state.helpSelection =
-          getNextHelpSelection(this.state.helpSelection, 1, ABOUT_MENU_ITEMS) ??
-          0;
-        this.renderAndEmit();
-        return;
-      }
-
-      return;
-    }
-
-    if (this.state.scene === "win") {
-      if (action === "RESET") {
-        await this.resetSession({ revealScene: true });
-      }
-      return;
-    }
-
-    if (!this.latestFrame.controls[action] || this.isInputLocked()) {
-      return;
-    }
-
-    await this.runGameAction(action);
+    await this.getActiveScene().dispatchAction(
+      action,
+      this.createSceneContext(),
+    );
   }
 
   async pressScreen(point: HoverPoint): Promise<void> {
-    if (this.disposed || this.state.error) {
+    if (this.disposed) {
       return;
     }
 
-    if (this.state.scene === "help") {
-      if (this.isInputLocked() && !this.startSessionPromise) {
-        return;
-      }
-
-      const hotspot = findHotspot(this.latestFrame.hotspots, point.x, point.y);
-      if (hotspot?.kind === "link") {
-        this.openHelpLink(
-          this.helpLinks.find((link) => link.id === hotspot.id),
-        );
-        return;
-      }
-      if (hotspot?.kind === "action") {
-        await this.activateMenuAction(hotspot.action);
-        return;
-      }
-
-      return;
-    }
-
-    if (this.state.scene === "about") {
-      if (this.isInputLocked()) {
-        return;
-      }
-
-      const hotspot = findHotspot(this.latestFrame.hotspots, point.x, point.y);
-      if (hotspot?.kind === "action") {
-        await this.activateMenuAction(hotspot.action);
-      }
-      return;
-    }
-
-    if (
-      this.state.scene !== "play" ||
-      !this.state.session ||
-      this.isInputLocked() ||
-      !this.latestFrame.controls.ACTION6
-    ) {
-      return;
-    }
-
-    if (point.y >= GAMEPLAY_HEIGHT) {
-      return;
-    }
-
-    this.pulseClickCursor(point);
-
-    const targetX = clampCoordinate(
-      Math.floor(point.x / GAMEPLAY_SCALE),
-      0,
-      63,
+    await this.getActiveScene().pressScreen(
+      point,
+      this.latestFrame,
+      this.createSceneContext(),
     );
-    const targetY = clampCoordinate(
-      Math.floor(point.y / GAMEPLAY_SCALE),
-      0,
-      63,
-    );
-
-    await this.runGameAction("ACTION6", {
-      x: targetX,
-      y: targetY,
-    });
   }
 
   setHoverPoint(point: HoverPoint | null): boolean {
@@ -634,11 +490,7 @@ export class Firmware {
         : null,
       clickPoint: this.state.clickPoint,
       busy: this.isInputLocked(),
-      startedOnce: this.state.startedOnce,
-      blinkVisible: this.state.blinkVisible,
       error: this.state.error,
-      helpSelection: this.state.helpSelection,
-      helpLinks: [...this.helpLinks],
     };
   }
 
@@ -656,40 +508,279 @@ export class Firmware {
     };
   }
 
+  private getActiveScene(): SceneModule {
+    if (this.state.error) {
+      return this.errorScene;
+    }
+
+    if (this.state.scene === "help") {
+      return this.helpScene;
+    }
+
+    if (this.state.scene === "about") {
+      return this.aboutScene;
+    }
+
+    if (this.state.scene === "win") {
+      return this.winScene;
+    }
+
+    return this.playScene;
+  }
+
+  private createSceneContext(): SceneContext {
+    return {
+      isInputLocked: () => this.isInputLocked(),
+      hasPendingSessionStart: () => this.startSessionPromise !== null,
+      hasSession: () => this.state.session !== null,
+      canDispatchGameplayAction: (action: ActionName) =>
+        Boolean(this.latestFrame.controls[action]),
+      resetSession: (options?: { revealScene?: boolean }) =>
+        this.resetSession(options),
+      activateMenuAction: (action: MenuActionId) =>
+        this.activateMenuAction(action),
+      runGameplayAction: (
+        action: Exclude<ActionName, "HELP">,
+        extraData?: Record<string, unknown>,
+      ) => this.runGameAction(action, extraData),
+      pulseClickCursor: (point: HoverPoint) => {
+        this.pulseClickCursor(point);
+      },
+      enterHelpMenu: (clearError: boolean = false) => {
+        this.enterHelpMenu(clearError);
+      },
+      requestRender: () => {
+        this.renderAndEmit();
+      },
+    };
+  }
+
+  private renderCurrentScene(model: FirmwareModel): FirmwareFrame {
+    return this.getActiveScene().render(model);
+  }
+
+  private startSceneTransition(
+    from: Framebuffer,
+    targetScene: SceneKind,
+  ): void {
+    if (this.timings.sceneTransitionMs <= 0) {
+      return;
+    }
+
+    this.sceneTransitionFrom = new Uint8Array(from);
+    this.sceneTransitionTarget = targetScene;
+    this.sceneTransitionStartMs = Date.now();
+    this.stopInterLevelTransition();
+    this.clearQueuedInterLevelTransition();
+
+    if (this.sceneTransitionTimerId !== null) {
+      return;
+    }
+
+    this.sceneTransitionTimerId = this.scheduler.setInterval(() => {
+      if (this.disposed) {
+        return;
+      }
+
+      this.renderAndEmit();
+    }, 1000 / 60);
+  }
+
+  private stopSceneTransition(): void {
+    this.scheduler.clearInterval(this.sceneTransitionTimerId);
+    this.sceneTransitionTimerId = null;
+    this.sceneTransitionFrom = null;
+    this.sceneTransitionTarget = null;
+    this.sceneTransitionStartMs = 0;
+  }
+
+  private startInterLevelTransition(from: Framebuffer): void {
+    if (this.timings.interLevelTransitionMs <= 0) {
+      return;
+    }
+
+    this.interLevelTransitionFrom = new Uint8Array(from);
+    this.interLevelTransitionStartMs = Date.now();
+
+    if (this.interLevelTransitionTimerId !== null) {
+      return;
+    }
+
+    this.interLevelTransitionTimerId = this.scheduler.setInterval(() => {
+      if (this.disposed) {
+        return;
+      }
+
+      this.renderAndEmit();
+    }, 1000 / 60);
+  }
+
+  private stopInterLevelTransition(): void {
+    this.scheduler.clearInterval(this.interLevelTransitionTimerId);
+    this.interLevelTransitionTimerId = null;
+    this.interLevelTransitionFrom = null;
+    this.interLevelTransitionStartMs = 0;
+  }
+
+  private queueInterLevelTransition(from: Framebuffer): void {
+    this.pendingInterLevelTransitionFrom = new Uint8Array(from);
+    this.pendingInterLevelTransitionAfterPlayback = true;
+  }
+
+  private clearQueuedInterLevelTransition(): void {
+    this.pendingInterLevelTransitionFrom = null;
+    this.pendingInterLevelTransitionAfterPlayback = false;
+  }
+
+  private startQueuedInterLevelTransitionIfReady(): void {
+    if (
+      !this.pendingInterLevelTransitionAfterPlayback ||
+      this.pendingInterLevelTransitionFrom === null
+    ) {
+      return;
+    }
+
+    if (this.state.scene !== "play" || this.state.error) {
+      this.clearQueuedInterLevelTransition();
+      return;
+    }
+
+    this.startInterLevelTransition(this.pendingInterLevelTransitionFrom);
+    this.clearQueuedInterLevelTransition();
+  }
+
+  private createInterLevelTransitionFrame(
+    from: Framebuffer,
+    to: FirmwareFrame,
+    progress: number,
+  ): FirmwareFrame {
+    const composited = new Uint8Array(to.framebuffer);
+    const revealRows = Math.max(
+      0,
+      Math.min(GAMEPLAY_HEIGHT, Math.floor(GAMEPLAY_HEIGHT * progress)),
+    );
+
+    for (let y = revealRows; y < GAMEPLAY_HEIGHT; y += 1) {
+      const rowOffset = y * SCREEN_WIDTH;
+      for (let x = 0; x < SCREEN_WIDTH; x += 1) {
+        composited[rowOffset + x] = from[rowOffset + x] ?? 0;
+      }
+    }
+
+    const bandStart = Math.max(0, revealRows - INTER_LEVEL_WIPE_BAND_ROWS);
+    const bandEnd = Math.min(
+      GAMEPLAY_HEIGHT,
+      revealRows + INTER_LEVEL_WIPE_BAND_ROWS,
+    );
+    for (let y = bandStart; y < bandEnd; y += 1) {
+      const rowOffset = y * SCREEN_WIDTH;
+      for (let x = 0; x < SCREEN_WIDTH; x += 1) {
+        composited[rowOffset + x] = INTER_LEVEL_WIPE_COLOR;
+      }
+    }
+
+    return {
+      ...to,
+      framebuffer: composited,
+    };
+  }
+
+  private applyInterLevelTransition(nextFrame: FirmwareFrame): FirmwareFrame {
+    if (this.interLevelTransitionFrom === null) {
+      return nextFrame;
+    }
+
+    if (nextFrame.scene !== "play") {
+      this.stopInterLevelTransition();
+      return nextFrame;
+    }
+
+    const elapsedMs = Date.now() - this.interLevelTransitionStartMs;
+    const progress = Math.min(
+      1,
+      elapsedMs / this.timings.interLevelTransitionMs,
+    );
+
+    if (progress >= 1) {
+      this.stopInterLevelTransition();
+      return nextFrame;
+    }
+
+    return this.createInterLevelTransitionFrame(
+      this.interLevelTransitionFrom,
+      nextFrame,
+      progress,
+    );
+  }
+
+  private createSceneTransitionFrame(
+    from: Framebuffer,
+    to: FirmwareFrame,
+    progress: number,
+  ): FirmwareFrame {
+    const composited = new Uint8Array(from);
+    const revealWidth = Math.max(
+      0,
+      Math.min(SCREEN_WIDTH, Math.floor(SCREEN_WIDTH * progress)),
+    );
+
+    for (let y = 0; y < SCREEN_HEIGHT; y += 1) {
+      const rowOffset = y * SCREEN_WIDTH;
+      for (let x = 0; x < revealWidth; x += 1) {
+        composited[rowOffset + x] = to.framebuffer[rowOffset + x] ?? 0;
+      }
+    }
+
+    return {
+      ...to,
+      framebuffer: composited,
+    };
+  }
+
+  private applySceneTransition(nextFrame: FirmwareFrame): FirmwareFrame {
+    if (
+      this.sceneTransitionFrom === null ||
+      this.sceneTransitionTarget !== nextFrame.scene
+    ) {
+      return nextFrame;
+    }
+
+    const elapsedMs = Date.now() - this.sceneTransitionStartMs;
+    const progress = Math.min(1, elapsedMs / this.timings.sceneTransitionMs);
+
+    if (progress >= 1) {
+      this.stopSceneTransition();
+      return nextFrame;
+    }
+
+    return this.createSceneTransitionFrame(
+      this.sceneTransitionFrom,
+      nextFrame,
+      progress,
+    );
+  }
+
   private renderAndEmit(): void {
     if (this.disposed) {
       return;
     }
 
-    let nextFrame = renderFirmware(this.buildModel());
+    let nextFrame = this.renderCurrentScene(this.buildModel());
     if (this.state.hoverPoint && !this.canTrackHover(nextFrame)) {
       this.state.hoverPoint = null;
-      nextFrame = renderFirmware(this.buildModel());
+      nextFrame = this.renderCurrentScene(this.buildModel());
     }
+
+    if (nextFrame.scene !== this.latestFrame.scene) {
+      this.startSceneTransition(this.latestFrame.framebuffer, nextFrame.scene);
+    }
+
+    nextFrame = this.applySceneTransition(nextFrame);
+    nextFrame = this.applyInterLevelTransition(nextFrame);
 
     this.latestFrame = nextFrame;
     this.snapshot = this.buildSnapshot(this.latestFrame);
     this.emit("snapshot", this.snapshot);
-  }
-
-  private ensureBlinkTimer(): void {
-    if (this.blinkTimerId !== null) {
-      return;
-    }
-
-    this.blinkTimerId = this.scheduler.setInterval(() => {
-      if (this.disposed) {
-        return;
-      }
-
-      this.state.blinkVisible = !this.state.blinkVisible;
-      this.renderAndEmit();
-    }, this.timings.blinkMs);
-  }
-
-  private stopBlinkTimer(): void {
-    this.scheduler.clearInterval(this.blinkTimerId);
-    this.blinkTimerId = null;
   }
 
   private stopPlayback(): void {
@@ -705,15 +796,33 @@ export class Firmware {
 
   private syncSession(nextSession: RuntimeSession | null): void {
     this.stopPlayback();
+    this.clearQueuedInterLevelTransition();
+    const previousSession = this.state.session;
     this.state.session = nextSession;
+
+    const shouldStartInterLevelTransition =
+      this.state.scene === "play" &&
+      previousSession !== null &&
+      nextSession !== null &&
+      nextSession.state !== "WIN" &&
+      nextSession.levelsCompleted > previousSession.levelsCompleted;
 
     const frames = getFrameSequence(nextSession);
     if (frames.length === 0) {
+      this.stopInterLevelTransition();
       this.state.displayGrid = null;
       return;
     }
 
     this.state.displayGrid = frames[0] ?? null;
+    if (shouldStartInterLevelTransition) {
+      if (frames.length > 1) {
+        this.queueInterLevelTransition(this.latestFrame.framebuffer);
+      } else {
+        this.startInterLevelTransition(this.latestFrame.framebuffer);
+      }
+    }
+
     if (frames.length === 1) {
       return;
     }
@@ -731,6 +840,7 @@ export class Firmware {
 
       if (frameIndex >= frames.length - 1) {
         this.stopPlayback();
+        this.startQueuedInterLevelTransitionIfReady();
       }
 
       this.renderAndEmit();
@@ -782,8 +892,6 @@ export class Firmware {
         });
         if (shouldReveal) {
           this.state.scene = opened.frame.state === "WIN" ? "win" : "play";
-          this.state.startedOnce = true;
-          this.state.helpSelection = 0;
         }
         this.state.error = null;
         this.renderAndEmit();
@@ -794,7 +902,7 @@ export class Firmware {
 
         this.syncSession(null);
         this.state.scene = "help";
-        this.state.helpSelection = 0;
+        this.helpScene.onEnter();
         this.state.error = getErrorMessage(sessionError);
         this.renderAndEmit();
       } finally {
@@ -856,11 +964,9 @@ export class Firmware {
         levelsCompleted: nextFrame.levelsCompleted,
         winLevels: nextFrame.winLevels,
       });
-      this.state.startedOnce = true;
       this.state.error = null;
       if (options?.revealScene ?? this.state.scene !== "help") {
         this.state.scene = nextFrame.state === "WIN" ? "win" : "play";
-        this.state.helpSelection = null;
       }
       this.renderAndEmit();
     } catch (actionError) {
@@ -871,7 +977,7 @@ export class Firmware {
       if (isSessionIdentityError(actionError)) {
         this.syncSession(null);
         this.state.scene = "help";
-        this.state.helpSelection = 0;
+        this.helpScene.onEnter();
       }
       this.state.error = getErrorMessage(actionError);
       this.renderAndEmit();
@@ -892,9 +998,7 @@ export class Firmware {
     }
 
     this.state.scene = this.state.session.state === "WIN" ? "win" : "play";
-    this.state.startedOnce = true;
     this.state.error = null;
-    this.state.helpSelection = null;
     this.renderAndEmit();
   }
 
@@ -911,7 +1015,7 @@ export class Firmware {
 
   private enterHelpMenu(clearError: boolean = false): void {
     this.state.scene = "help";
-    this.state.helpSelection = 0;
+    this.helpScene.onEnter();
     if (clearError) {
       this.state.error = null;
     }
@@ -926,22 +1030,13 @@ export class Firmware {
 
     if (action === "about") {
       this.state.scene = "about";
-      this.state.helpSelection = 0;
+      this.aboutScene.onEnter();
       this.renderAndEmit();
       return;
     }
 
     this.enterHelpMenu();
   }
-
-  private openHelpLink(link: HelpLink | undefined): void {
-    if (!link?.href) {
-      return;
-    }
-
-    this.emit("open-url", { href: link.href });
-  }
-
   private pulseClickCursor(point: HoverPoint): void {
     this.stopClickPulse();
     this.state.clickPoint = point;

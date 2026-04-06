@@ -1,0 +1,302 @@
+import type { ActionName } from "../../lib/api";
+import { drawText, FontSize, measureText } from "../font";
+import {
+  blitSprite,
+  clearFramebuffer,
+  createFramebuffer,
+  type Framebuffer,
+} from "../framebuffer";
+import {
+  findHotspot,
+  getNextHelpSelection,
+  type ControlState,
+  type FirmwareFrame,
+  type FirmwareModel,
+  type HelpLink,
+  type InteractiveRegion,
+  type MenuActionId,
+} from "../os";
+import { UI_COLORS } from "../palette";
+import {
+  SPIRTE_PLAY,
+  SPRITE_CONTROLS_CIRCLE,
+  SPRITE_CONTROLS_DIAMOND,
+  SPRITE_CONTROLS_DISABLED,
+  SPRITE_CONTROLS_DPAD_DOWN,
+  SPRITE_CONTROLS_DPAD_LEFT,
+  SPRITE_CONTROLS_DPAD_RIGHT,
+  SPRITE_CONTROLS_DPAD_UP,
+  SPRITE_CONTROLS_TOUCH,
+  SPRITE_LOGO,
+} from "../sprites";
+import type { SceneContext, SceneModule } from "./base";
+
+const MENU_ITEMS: readonly HelpLink[] = [
+  { id: "play", label: "PLAY" },
+  { id: "about", label: "ABOUT" },
+];
+
+function createControlState(defaultValue: boolean = false): ControlState {
+  return {
+    ACTION1: defaultValue,
+    ACTION2: defaultValue,
+    ACTION3: defaultValue,
+    ACTION4: defaultValue,
+    ACTION5: defaultValue,
+    ACTION6: defaultValue,
+    ACTION7: defaultValue,
+    HELP: defaultValue,
+    RESET: defaultValue,
+  };
+}
+
+function drawTextRight(
+  framebuffer: Framebuffer,
+  right: number,
+  y: number,
+  text: string,
+  color: number,
+  size: FontSize = "large",
+): void {
+  drawText(framebuffer, right - measureText(text, size), y, text, color, size);
+}
+
+function drawTextCenter(
+  framebuffer: Framebuffer,
+  x: number,
+  y: number,
+  text: string,
+  color: number,
+  size: FontSize = "large",
+): void {
+  drawText(
+    framebuffer,
+    x - Math.floor(measureText(text, size) / 2),
+    y,
+    text,
+    color,
+    size,
+  );
+}
+
+function getMenuAction(selection: number | null): MenuActionId {
+  return selection === 1 ? "about" : "play";
+}
+
+function getSelectionForAction(action: MenuActionId): number | null {
+  if (action === "play") {
+    return 0;
+  }
+
+  if (action === "about") {
+    return 1;
+  }
+
+  return null;
+}
+
+export class HelpSceneModule implements SceneModule {
+  private selection: number | null = 0;
+
+  onEnter(): void {
+    this.selection = 0;
+  }
+
+  getSelection(): number | null {
+    return this.selection;
+  }
+
+  async dispatchAction(
+    action: ActionName,
+    context: SceneContext,
+  ): Promise<void> {
+    const canQueueSessionReveal =
+      context.isInputLocked() && context.hasPendingSessionStart();
+
+    if (
+      context.isInputLocked() &&
+      !canQueueSessionReveal &&
+      action !== "ACTION1" &&
+      action !== "ACTION2" &&
+      action !== "ACTION3" &&
+      action !== "ACTION4"
+    ) {
+      return;
+    }
+
+    if (action === "HELP") {
+      return;
+    }
+
+    if (action === "RESET") {
+      await context.resetSession({ revealScene: true });
+      return;
+    }
+
+    if (action === "ACTION1" || action === "ACTION3") {
+      this.selection =
+        getNextHelpSelection(this.selection, -1, MENU_ITEMS) ?? 0;
+      context.requestRender();
+      return;
+    }
+
+    if (action === "ACTION2" || action === "ACTION4") {
+      this.selection = getNextHelpSelection(this.selection, 1, MENU_ITEMS) ?? 0;
+      context.requestRender();
+      return;
+    }
+
+    if (action === "ACTION5") {
+      await context.activateMenuAction(getMenuAction(this.selection));
+    }
+  }
+
+  async pressScreen(
+    point: { x: number; y: number },
+    frame: FirmwareFrame,
+    context: SceneContext,
+  ): Promise<void> {
+    if (context.isInputLocked() && !context.hasPendingSessionStart()) {
+      return;
+    }
+
+    const hotspot = findHotspot(frame.hotspots, point.x, point.y);
+    if (hotspot?.kind === "action") {
+      await context.activateMenuAction(hotspot.action);
+    }
+  }
+
+  render(model: FirmwareModel): FirmwareFrame {
+    const framebuffer = createFramebuffer(UI_COLORS.background);
+    const controls = createControlState(true);
+    const hotspots: InteractiveRegion[] = [];
+
+    clearFramebuffer(framebuffer, UI_COLORS.background);
+    blitSprite(framebuffer, SPRITE_LOGO);
+
+    if (!(model.daily && model.session)) {
+      drawText(framebuffer, 44, 125, "LOADING", UI_COLORS.textMuted, "large");
+      return {
+        framebuffer,
+        controls,
+        hotspots,
+        scene: "help",
+      };
+    }
+
+    drawText(
+      framebuffer,
+      14,
+      35,
+      `${model.daily.title}`,
+      UI_COLORS.text,
+      "large",
+    );
+    drawTextRight(
+      framebuffer,
+      128 - 14,
+      35,
+      `${model.daily.date}`,
+      UI_COLORS.textMuted,
+      "large",
+    );
+
+    drawTextCenter(framebuffer, 64, 50, "AVAILABLE CONTROLS", 4, "small");
+
+    blitSprite(framebuffer, SPRITE_CONTROLS_DISABLED, 16, 57);
+    const allowed = model.session.availableActions;
+    for (const enabledAction of allowed) {
+      switch (enabledAction) {
+        case "ACTION1":
+          blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_UP, 29, 63, { [4]: 1 });
+          break;
+        case "ACTION2":
+          blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_DOWN, 29, 80, {
+            [4]: 1,
+          });
+          break;
+        case "ACTION3":
+          blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_LEFT, 21, 71, {
+            [4]: 1,
+          });
+          break;
+        case "ACTION4":
+          blitSprite(framebuffer, SPRITE_CONTROLS_DPAD_RIGHT, 38, 71, {
+            [4]: 1,
+          });
+          break;
+        case "ACTION5":
+          blitSprite(framebuffer, SPRITE_CONTROLS_DIAMOND, 92, 61, {
+            [4]: 1,
+          });
+          break;
+        case "ACTION6":
+          blitSprite(framebuffer, SPRITE_CONTROLS_TOUCH, 57, 67, { [4]: 1 });
+          break;
+        case "ACTION7":
+          blitSprite(framebuffer, SPRITE_CONTROLS_CIRCLE, 80, 74, { [4]: 1 });
+          break;
+        case "HELP":
+        case "RESET":
+          break;
+      }
+    }
+
+    hotspots.push({
+      id: "play",
+      kind: "action",
+      action: "play",
+      x: 35,
+      y: 98,
+      width: SPIRTE_PLAY.width + 4,
+      height: SPIRTE_PLAY.height + 4,
+    });
+
+    hotspots.push({
+      id: "about",
+      kind: "action",
+      action: "about",
+      x: 48,
+      y: 123,
+      width: 33,
+      height: 11,
+    });
+
+    const hoveredHotspot =
+      model.hoverPoint === null
+        ? null
+        : findHotspot(hotspots, model.hoverPoint.x, model.hoverPoint.y);
+
+    if (hoveredHotspot?.kind === "action") {
+      const hoveredSelection = getSelectionForAction(hoveredHotspot.action);
+      if (hoveredSelection !== null) {
+        this.selection = hoveredSelection;
+      }
+    }
+
+    const selectedAction = getMenuAction(this.selection);
+    const indicatorHotspot = hotspots.find(
+      (hotspot) =>
+        hotspot.kind === "action" && hotspot.action === selectedAction,
+    );
+
+    blitSprite(framebuffer, SPIRTE_PLAY, 37, 100, {
+      [12]: indicatorHotspot?.id === "play" ? 14 : 4,
+    });
+    drawText(
+      framebuffer,
+      50,
+      125,
+      "ABOUT",
+      indicatorHotspot?.id === "about" ? 14 : 4,
+      "large",
+    );
+
+    return {
+      framebuffer,
+      controls,
+      hotspots,
+      scene: "help",
+    };
+  }
+}
