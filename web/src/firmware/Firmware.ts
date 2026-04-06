@@ -176,7 +176,7 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isIosOrAndroidPlatform(): boolean {
+export function isIosOrAndroidPlatform(): boolean {
   if (typeof navigator === "undefined") {
     return false;
   }

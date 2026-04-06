@@ -1,4 +1,5 @@
 import type { ActionName } from "../../lib/api";
+import { isIosOrAndroidPlatform } from "../Firmware";
 import { drawTextCenter } from "../font";
 import { blitSprite, createFramebuffer, strokeRect } from "../framebuffer";
 import {
@@ -80,7 +81,11 @@ export class AboutSceneModule implements SceneModule {
     if (hotspot?.kind === "action") {
       await context.activateMenuAction(hotspot.action);
     } else if (hotspot?.kind === "link" && hotspot.href) {
-      window.open(hotspot.href, "_blank", "noopener");
+      if (isIosOrAndroidPlatform()) {
+        window.location.href = hotspot.href;
+      } else {
+        window.open(hotspot.href, "_blank", "noopener");
+      }
     }
   }
 
