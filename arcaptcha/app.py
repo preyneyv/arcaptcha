@@ -96,7 +96,8 @@ def _build_allowed_origins(config: AppConfig) -> set[str]:
     }
     if config.frontend_dev_url:
         base_origins.add(config.frontend_dev_url.rstrip("/"))
-    base_origins.update(DEFAULT_DEV_ORIGINS)
+    if config.debug:
+        base_origins.update(DEFAULT_DEV_ORIGINS)
 
     expanded_origins: set[str] = set()
     for origin in base_origins:
@@ -347,6 +348,11 @@ def _register_socket_routes(
             binding.move_hash,
         )
 
+    def socket_server_error(log_message: str, error: Exception) -> dict[str, Any]:
+        LOGGER.exception(log_message)
+        error_message = str(error) if config.debug else "internal server error"
+        return _socket_error("SERVER_ERROR", error_message, 500)
+
     async def socket_idle_reaper_loop() -> None:
         idle_ttl = runtime_manager.session_ttl
 
@@ -418,8 +424,10 @@ def _register_socket_routes(
         except EnvironmentSyncError as error:
             return _socket_error("ENVIRONMENT_SYNC_ERROR", str(error), 503)
         except Exception as error:  # pragma: no cover - defensive runtime fallback
-            LOGGER.exception("failed to bootstrap daily environment over socket")
-            return _socket_error("SERVER_ERROR", str(error), 500)
+            return socket_server_error(
+                "failed to bootstrap daily environment over socket",
+                error,
+            )
 
         touch_socket_binding(
             sid,
@@ -454,8 +462,10 @@ def _register_socket_routes(
         except SessionMissingError as error:
             return _socket_error("SESSION_MISSING", str(error), 404)
         except Exception as error:  # pragma: no cover - defensive runtime fallback
-            LOGGER.exception("failed to apply daily action over socket")
-            return _socket_error("SERVER_ERROR", str(error), 500)
+            return socket_server_error(
+                "failed to apply daily action over socket",
+                error,
+            )
 
         touch_socket_binding(
             sid,

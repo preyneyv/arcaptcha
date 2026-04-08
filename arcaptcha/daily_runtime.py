@@ -152,9 +152,8 @@ class DailyRuntimeManager:
         if latest_existing is not None:
             with latest_existing.lock:
                 frame = latest_existing.wrapper.observation_space
-                if (
-                    frame is not None
-                    and latest_existing.move_count >= len(replay_actions)
+                if frame is not None and latest_existing.move_count >= len(
+                    replay_actions
                 ):
                     latest_existing.last_action_at = datetime.now(timezone.utc)
                     return (
@@ -308,9 +307,7 @@ class DailyRuntimeManager:
         move_hash: str,
     ) -> LiveSession | None:
         with self._sessions_lock:
-            return self._sessions.get(
-                self._session_key(api_key, daily_date, move_hash)
-            )
+            return self._sessions.get(self._session_key(api_key, daily_date, move_hash))
 
     def _get_latest_session(
         self,
