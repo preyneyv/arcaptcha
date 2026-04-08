@@ -1,3 +1,4 @@
+import { io, type Socket } from "socket.io-client";
 import { getOrCreatePlayerId } from "./storage";
 
 export class ApiRequestError extends Error {
@@ -87,15 +88,15 @@ interface RawCommandFrame {
 }
 
 type RawBootstrapPayload = RawDailyPuzzle & RawCommandFrame;
+type SocketEventName = "bootstrap" | "action" | "unload";
 
 const API_ROOT = normalizeApiRoot(import.meta.env.VITE_API_ROOT);
+const SOCKET_NAMESPACE = "/arcaptcha";
+const SOCKET_PATH = "/socket.io";
+const SOCKET_ACK_TIMEOUT_MS = 10000;
 
-interface ApiRequestOptions {
-  method?: string;
-  body?: unknown;
-  headers?: HeadersInit;
-  keepalive?: boolean;
-}
+let socketClient: Socket | null = null;
+let socketConnectPromise: Promise<Socket> | null = null;
 
 function formatDatePart(value: number): string {
   return value.toString().padStart(2, "0");
@@ -109,6 +110,14 @@ function resolveEditionDate(editionDate?: string | null): string {
   return editionDate || getSelectedEditionDate();
 }
 
+function buildEditionDatePayload(editionDate?: string | null): {
+  edition_date: string;
+} {
+  return {
+    edition_date: resolveEditionDate(editionDate),
+  };
+}
+
 function normalizeApiRoot(raw: string | undefined): string {
   if (!raw) {
     return "";
@@ -117,61 +126,138 @@ function normalizeApiRoot(raw: string | undefined): string {
   return raw.trim().replace(/\/+$/, "");
 }
 
-function buildApiUrl(path: string): string {
-  return API_ROOT ? `${API_ROOT}${path}` : path;
-}
-
-function buildHeaders(initHeaders?: HeadersInit): Headers {
-  const headers = new Headers(initHeaders);
-  headers.set("Content-Type", "application/json");
-  headers.set("X-API-Key", getOrCreatePlayerId());
-  return headers;
-}
-
-async function apiRequest<T>(
-  path: string,
-  options: ApiRequestOptions = {},
-): Promise<T> {
-  const response = await fetch(buildApiUrl(path), {
-    method: options.method ?? "GET",
-    headers: buildHeaders(options.headers),
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    keepalive: options.keepalive,
-  });
-
-  return readJson<T>(response);
-}
-
-async function readJson<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const text = await response.text();
-
-    if (text) {
-      try {
-        const payload = JSON.parse(text) as {
-          error?: unknown;
-          message?: unknown;
-        };
-        const message =
-          typeof payload.message === "string" && payload.message
-            ? payload.message
-            : text;
-        const code = typeof payload.error === "string" ? payload.error : null;
-        throw new ApiRequestError(message, response.status, code);
-      } catch (error) {
-        if (error instanceof ApiRequestError) {
-          throw error;
-        }
-      }
-    }
-
-    throw new ApiRequestError(
-      text || `Request failed with ${response.status}`,
-      response.status,
-    );
+function resolveSocketNamespaceUrl(): string {
+  if (!API_ROOT) {
+    return SOCKET_NAMESPACE;
   }
 
-  return (await response.json()) as T;
+  try {
+    const baseUrl =
+      typeof window === "undefined"
+        ? new URL(API_ROOT)
+        : new URL(API_ROOT, window.location.origin);
+    return `${baseUrl.origin}${SOCKET_NAMESPACE}`;
+  } catch {
+    return SOCKET_NAMESPACE;
+  }
+}
+
+function getSocketClient(): Socket {
+  if (socketClient) {
+    return socketClient;
+  }
+
+  socketClient = io(resolveSocketNamespaceUrl(), {
+    path: SOCKET_PATH,
+    autoConnect: false,
+    reconnection: false,
+    transports: ["websocket", "polling"],
+    auth: buildSocketAuth(),
+  });
+
+  return socketClient;
+}
+
+function toApiRequestError(
+  error: unknown,
+  fallbackStatus: number,
+): ApiRequestError {
+  if (error instanceof ApiRequestError) {
+    return error;
+  }
+
+  if (error instanceof Error && error.message) {
+    return new ApiRequestError(error.message, fallbackStatus);
+  }
+
+  return new ApiRequestError("Socket request failed", fallbackStatus);
+}
+
+function buildSocketAuth(): { api_key: string } {
+  return {
+    api_key: getOrCreatePlayerId(),
+  };
+}
+
+function parseSocketEnvelope<T>(raw: unknown): T {
+  if (!raw || typeof raw !== "object") {
+    throw new ApiRequestError("Invalid socket response", 500);
+  }
+
+  const envelope = raw as Record<string, unknown>;
+  if (envelope.ok === true) {
+    return envelope.payload as T;
+  }
+
+  const message =
+    typeof envelope.message === "string" && envelope.message
+      ? envelope.message
+      : "Socket request failed";
+  const status =
+    typeof envelope.status === "number" && Number.isFinite(envelope.status)
+      ? envelope.status
+      : 500;
+  const code = typeof envelope.error === "string" ? envelope.error : null;
+  throw new ApiRequestError(message, status, code);
+}
+
+async function ensureSocketConnected(): Promise<Socket> {
+  const client = getSocketClient();
+  if (client.connected) {
+    return client;
+  }
+
+  if (socketConnectPromise) {
+    return socketConnectPromise;
+  }
+
+  socketConnectPromise = new Promise<Socket>((resolve, reject) => {
+    const handleConnect = () => {
+      cleanup();
+      resolve(client);
+    };
+
+    const handleConnectError = (error: Error) => {
+      cleanup();
+      reject(toApiRequestError(error, 503));
+    };
+
+    const cleanup = () => {
+      client.off("connect", handleConnect);
+      client.off("connect_error", handleConnectError);
+    };
+
+    client.auth = buildSocketAuth();
+    client.on("connect", handleConnect);
+    client.on("connect_error", handleConnectError);
+    client.connect();
+  });
+
+  try {
+    return await socketConnectPromise;
+  } finally {
+    socketConnectPromise = null;
+  }
+}
+
+async function socketRequest<TResult>(
+  eventName: SocketEventName,
+  payload: Record<string, unknown>,
+): Promise<TResult> {
+  const client = await ensureSocketConnected();
+
+  try {
+    const rawResponse = await client
+      .timeout(SOCKET_ACK_TIMEOUT_MS)
+      .emitWithAck(eventName, payload);
+    return parseSocketEnvelope<TResult>(rawResponse);
+  } catch (error) {
+    throw toApiRequestError(error, 503);
+  }
+}
+
+function isActionName(action: ActionName | undefined): action is ActionName {
+  return action !== undefined;
 }
 
 function mapDailyPuzzle(raw: RawDailyPuzzle): DailyPuzzle {
@@ -204,7 +290,7 @@ function mapFrame(raw: RawCommandFrame): CommandFrame {
     fullReset: raw.full_reset,
     availableActions: raw.available_actions
       .map((actionCode) => ACTION_NAMES_BY_CODE[actionCode])
-      .filter(Boolean),
+      .filter(isActionName),
     frame: raw.frame,
     grid: extractGrid(raw.frame),
   };
@@ -216,20 +302,14 @@ export async function bootstrapDailySession(
     replayActions?: ReplayActionEntry[];
   } = {},
 ): Promise<BootstrappedSession> {
-  const payload: Record<string, unknown> = {
-    edition_date: resolveEditionDate(options.editionDate),
-  };
+  const payload: Record<string, unknown> = buildEditionDatePayload(
+    options.editionDate,
+  );
   if (options.replayActions && options.replayActions.length > 0) {
     payload.replay_actions = options.replayActions;
   }
 
-  const raw = await apiRequest<RawBootstrapPayload>(
-    "/api/arcaptcha/bootstrap",
-    {
-      method: "POST",
-      body: payload,
-    },
-  );
+  const raw = await socketRequest<RawBootstrapPayload>("bootstrap", payload);
   return {
     daily: mapDailyPuzzle(raw),
     frame: mapFrame(raw),
@@ -246,7 +326,7 @@ export async function sendAction(
 ): Promise<CommandFrame> {
   const payload: Record<string, unknown> = {
     action,
-    edition_date: resolveEditionDate(options.editionDate),
+    ...buildEditionDatePayload(options.editionDate),
     ...extraData,
   };
 
@@ -254,52 +334,31 @@ export async function sendAction(
     payload.move_hash = options.moveHash;
   }
 
-  return mapFrame(
-    await apiRequest<RawCommandFrame>("/api/arcaptcha/action", {
-      method: "POST",
-      body: payload,
-    }),
-  );
+  return mapFrame(await socketRequest<RawCommandFrame>("action", payload));
 }
 
 export async function unloadDailySession(
   editionDate?: string | null,
 ): Promise<void> {
-  await apiRequest<{ status: string }>("/api/arcaptcha/unload", {
-    method: "POST",
-    body: {
-      edition_date: resolveEditionDate(editionDate),
-    },
-  });
+  await socketRequest<{ status: string }>(
+    "unload",
+    buildEditionDatePayload(editionDate),
+  );
 }
 
 export function keepAliveUnloadDailySession(editionDate?: string | null): void {
-  const payload = JSON.stringify({
-    edition_date: resolveEditionDate(editionDate),
-    api_key: getOrCreatePlayerId(),
-  });
-
-  if (
-    typeof navigator !== "undefined" &&
-    typeof navigator.sendBeacon === "function"
-  ) {
-    const accepted = navigator.sendBeacon(
-      buildApiUrl("/api/arcaptcha/unload"),
-      new Blob([payload], { type: "application/json" }),
-    );
-    if (accepted) {
-      return;
-    }
+  const client = socketClient;
+  if (!client) {
+    return;
   }
 
-  void fetch(buildApiUrl("/api/arcaptcha/unload"), {
-    method: "POST",
-    headers: buildHeaders(),
-    body: payload,
-    keepalive: true,
-  }).catch(() => {
-    // Ignore best-effort unload failures.
-  });
+  const payload = buildEditionDatePayload(editionDate);
+
+  if (client.connected) {
+    client.emit("unload", payload);
+  }
+
+  client.disconnect();
 }
 
 export function isSessionMissingError(error: unknown): boolean {

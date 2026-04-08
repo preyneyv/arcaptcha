@@ -20,10 +20,12 @@ ARCaptcha is a daily browser puzzle built on top of [ARC-AGI-3](https://arcprize
 
 - The backend no longer exposes the generic ARC scorecard or `/api/cmd/*` routes.
 - The browser uses an anonymous `X-API-Key` stored in `localStorage` as a lightweight per-browser identity.
-- The primary gameplay flow is `POST /api/arcaptcha/bootstrap`, `POST /api/arcaptcha/action`, and `POST /api/arcaptcha/unload`.
+- The primary gameplay transport is Socket.IO on namespace `/arcaptcha`, with `bootstrap`, `action`, and `unload` events.
+- The backend still exposes `/api/arcaptcha/*` HTTP routes for health and compatibility, but the UI gameplay path is socket-based.
 - The browser selects one edition date from its local calendar day and sends that `edition_date` on bootstrap, action, and unload requests.
 - The backend accepts only the latest globally available edition date relative to `UTC+14` and the immediately previous one, so all local timezones map onto a valid playable edition.
 - `bootstrap` returns both the selected daily metadata and the current game frame, and it keeps the environment warm by reusing or creating the live in-memory session for that edition date.
+- When a socket closes or is idle longer than the session TTL, the associated environment session is destroyed.
 - If the current daily environment is not present under `environment_files/`, the backend downloads its metadata and source code from the ARC servers during bootstrap.
 - No backend user accounts or durable user progress are stored. Refresh and restart recovery comes from the browser replay log in `localStorage`.
 
@@ -64,6 +66,7 @@ npm run dev
 ```
 
 The frontend defaults to `http://127.0.0.1:5173` and proxies relative `/api` requests to `http://127.0.0.1:8000`.
+The frontend dev proxy also forwards `/socket.io` websocket traffic to `http://127.0.0.1:8000`.
 
 ## Utility Commands
 
@@ -103,7 +106,7 @@ After a successful frontend build, the backend serves `web/dist` at `/`.
 - `ARC_API_KEY` configures the upstream ARC API key. If unset, the backend requests an anonymous key when it needs one.
 - `ARCAPTCHA_SESSION_TTL_SECONDS` controls how long an idle in-memory daily session stays warm before cleanup. Defaults to `900`.
 - `ARCAPTCHA_ARC_REQUEST_TIMEOUT_SECONDS` controls ARC metadata and source download timeouts. Defaults to `10`.
-- `VITE_API_ROOT` changes the frontend API origin at build or dev time. If unset, the frontend uses relative `/api` URLs.
+- `VITE_API_ROOT` changes the frontend backend origin at build or dev time. If unset, the frontend uses relative URLs for both `/api` and `/socket.io`.
 
 Example frontend override:
 
@@ -116,7 +119,7 @@ VITE_API_ROOT=http://localhost:5000 npm run dev
 
 ### Minimal API Image
 
-The root [Dockerfile](Dockerfile) builds a minimal API image and starts the backend with Waitress on port `5000`.
+The root [Dockerfile](Dockerfile) builds a minimal API image and starts the backend with the Socket.IO-enabled CLI runtime on port `5000`.
 
 ```bash
 docker build -t arcaptcha/api .

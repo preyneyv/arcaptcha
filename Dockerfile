@@ -23,4 +23,4 @@ WORKDIR /app/arcaptcha
 
 EXPOSE 5000
 
-CMD ["sh", "-c", "waitress-serve --host=0.0.0.0 --port=${PORT} --call app:create_app"]
+CMD ["sh", "-c", "python cli.py serve --host 0.0.0.0 --port ${PORT}"]

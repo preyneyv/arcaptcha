@@ -6,7 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Sequence
 
-from app import create_app
+import uvicorn
+from app import create_socketio_asgi_app
 from catalog import GameCatalog
 from config import AppConfig
 from edition import EditionDateValidationError, resolve_edition_date
@@ -79,15 +80,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     host = args.host or config.host
     port = args.port or config.port
     debug = bool(args.debug or config.debug)
-    app = create_app(config)
+    app = create_socketio_asgi_app(config)
 
-    if debug:
-        app.run(host=host, port=port, debug=True, threaded=True)
-        return
-
-    from waitress import serve
-
-    serve(app, host=host, port=port)
+    log_level = "debug" if debug else "info"
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level,
+    )
 
 
 if __name__ == "__main__":
