@@ -88,6 +88,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         host=host,
         port=port,
         log_level=log_level,
+        lifespan="off",
     )
 
 
