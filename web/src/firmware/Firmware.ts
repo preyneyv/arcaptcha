@@ -93,6 +93,7 @@ export interface FirmwareApi {
     extraData?: Record<string, unknown>,
     options?: {
       editionDate?: string | null;
+      moveHash?: string;
     },
   ): Promise<CommandFrame>;
   unloadDailySession(editionDate?: string | null): Promise<void>;

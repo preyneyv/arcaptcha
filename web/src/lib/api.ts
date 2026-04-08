@@ -43,6 +43,7 @@ export interface DailyPuzzle {
 export interface CommandFrame {
   gameId: string;
   state: GameState;
+  moveHash?: string;
   levelsCompleted: number;
   winLevels: number;
   fullReset: boolean;
@@ -77,6 +78,7 @@ interface RawDailyPuzzle {
 interface RawCommandFrame {
   game_id: string;
   state: GameState;
+  move_hash?: string;
   levels_completed: number;
   win_levels: number;
   full_reset: boolean;
@@ -193,6 +195,10 @@ function mapFrame(raw: RawCommandFrame): CommandFrame {
   return {
     gameId: raw.game_id,
     state: raw.state,
+    moveHash:
+      typeof raw.move_hash === "string" && raw.move_hash
+        ? raw.move_hash
+        : undefined,
     levelsCompleted: raw.levels_completed,
     winLevels: raw.win_levels,
     fullReset: raw.full_reset,
@@ -235,6 +241,7 @@ export async function sendAction(
   extraData: Record<string, unknown> = {},
   options: {
     editionDate?: string | null;
+    moveHash?: string;
   } = {},
 ): Promise<CommandFrame> {
   const payload: Record<string, unknown> = {
@@ -242,6 +249,10 @@ export async function sendAction(
     edition_date: resolveEditionDate(options.editionDate),
     ...extraData,
   };
+
+  if (typeof options.moveHash === "string" && options.moveHash) {
+    payload.move_hash = options.moveHash;
+  }
 
   return mapFrame(
     await apiRequest<RawCommandFrame>("/api/arcaptcha/action", {

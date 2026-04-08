@@ -234,10 +234,8 @@ export default function App() {
       keepAliveUnloadDailySession(firmware.getActiveEditionDate());
     };
 
-    window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("beforeunload", handlePageHide);
     return () => {
-      window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
     };
   }, [firmware]);

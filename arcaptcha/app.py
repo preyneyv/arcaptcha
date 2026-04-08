@@ -14,6 +14,7 @@ from daily_runtime import (
     SessionMissingError,
     frame_to_payload,
     parse_action_request,
+    parse_move_hash,
     parse_replay_actions,
 )
 from edition import EditionDateValidationError, resolve_edition_date
@@ -192,7 +193,7 @@ def _register_api_routes(
 
         api_key = request.headers.get("X-API-Key", "anonymous")
         try:
-            environment, frame = runtime_manager.bootstrap(
+            environment, frame, move_hash = runtime_manager.bootstrap(
                 api_key=api_key,
                 daily_date=edition_date.isoformat(),
                 game_id=scheduled.entry.game_id,
@@ -221,7 +222,7 @@ def _register_api_routes(
             )
 
         payload = scheduled.to_payload(environment)
-        payload.update(frame_to_payload(environment, frame))
+        payload.update(frame_to_payload(environment, frame, move_hash=move_hash))
         return jsonify(payload)
 
     @app.post("/api/arcaptcha/action")
@@ -233,6 +234,7 @@ def _register_api_routes(
             now = datetime.now(timezone.utc)
             data = _read_request_body()
             action = parse_action_request(data)
+            expected_move_hash = parse_move_hash(data.get("move_hash"))
             edition_date = resolve_edition_date(
                 data.get("edition_date"),
                 season_start=config.season_start,
@@ -243,9 +245,10 @@ def _register_api_routes(
 
         api_key = request.headers.get("X-API-Key", "anonymous")
         try:
-            environment, frame = runtime_manager.apply_action(
+            environment, frame, move_hash = runtime_manager.apply_action(
                 api_key=api_key,
                 daily_date=edition_date.isoformat(),
+                expected_move_hash=expected_move_hash,
                 action=action,
             )
         except SessionMissingError as error:
@@ -270,7 +273,7 @@ def _register_api_routes(
                 500,
             )
 
-        return jsonify(frame_to_payload(environment, frame))
+        return jsonify(frame_to_payload(environment, frame, move_hash=move_hash))
 
     @app.post("/api/arcaptcha/unload")
     def arcaptcha_unload() -> Response | tuple[Response, int]:

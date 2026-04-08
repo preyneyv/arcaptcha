@@ -27,6 +27,7 @@ const GAME_STATES: readonly GameState[] = [
 export interface RuntimeSession {
   gameId: string;
   state: GameState;
+  moveHash?: string;
   frames: number[][][];
   grid: number[][];
   availableActions: ActionName[];
@@ -59,6 +60,7 @@ export interface GameEnvironmentApi {
     extraData?: Record<string, unknown>,
     options?: {
       editionDate?: string | null;
+      moveHash?: string;
     },
   ): Promise<CommandFrame>;
   unloadDailySession(editionDate?: string | null): Promise<void>;
@@ -155,6 +157,7 @@ export function toPersistedRunSessionState(
   return {
     gameId: session.gameId,
     state: session.state,
+    moveHash: session.moveHash,
     availableActions: session.availableActions,
     grid: session.grid,
     countedActions: Math.max(1, session.countedActions),
@@ -177,6 +180,7 @@ export function toRuntimeSessionFromPersisted(
   return {
     gameId: persistedSession.gameId,
     state: normalizeSessionState(persistedSession.state),
+    moveHash: persistedSession.moveHash,
     frames: [],
     grid: persistedSession.grid,
     availableActions: persistedSession.availableActions,
@@ -220,6 +224,7 @@ export function buildRuntimeSessionFromBootstrap(
       bootstrapped.frame.gameId,
     ),
     state: bootstrapped.frame.state,
+    moveHash: bootstrapped.frame.moveHash,
     frames: bootstrapped.frame.frame,
     grid: bootstrapped.frame.grid,
     availableActions: bootstrapped.frame.availableActions,
@@ -433,6 +438,7 @@ export class GameEnvironment {
     const nextFrame = await this.api.sendAction(action, extraData, {
       editionDate:
         options?.editionDate ?? this._daily?.date ?? getSelectedEditionDate(),
+      moveHash: activeSession.moveHash,
     });
 
     const nextCountedActions = activeSession.countedActions + 1;
@@ -445,6 +451,7 @@ export class GameEnvironment {
       ...activeSession,
       gameId: preferSessionGameId(activeSession.gameId, nextFrame.gameId),
       state: nextFrame.state,
+      moveHash: nextFrame.moveHash,
       frames: nextFrame.frame,
       grid: nextFrame.grid,
       availableActions: nextFrame.availableActions,

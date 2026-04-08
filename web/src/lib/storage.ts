@@ -12,6 +12,7 @@ export interface PersistedActionLogEntry extends ReplayActionEntry {}
 export interface PersistedRunSessionState {
   gameId: string;
   state: string;
+  moveHash?: string;
   availableActions: ActionName[];
   grid: number[][];
   countedActions: number;
@@ -143,7 +144,10 @@ function parseActionLog(raw: unknown): PersistedActionLogEntry[] {
 
     const source = item as Record<string, unknown>;
     const action = source.action;
-    if (typeof action !== "string" || !allowed.has(action as GameplayActionName)) {
+    if (
+      typeof action !== "string" ||
+      !allowed.has(action as GameplayActionName)
+    ) {
       continue;
     }
 
@@ -173,6 +177,10 @@ function parseRunSession(raw: unknown): PersistedRunSessionState | null {
 
   const state =
     typeof source.state === "string" && source.state ? source.state : "RUNNING";
+  const moveHash =
+    typeof source.moveHash === "string" && source.moveHash
+      ? source.moveHash
+      : undefined;
   const availableActions = parseAvailableActions(source.availableActions);
   const grid = parsePersistedGrid(source.grid);
   const actionLog = parseActionLog(source.actionLog);
@@ -196,6 +204,7 @@ function parseRunSession(raw: unknown): PersistedRunSessionState | null {
   return {
     gameId: source.gameId,
     state,
+    moveHash,
     availableActions,
     grid,
     countedActions,
