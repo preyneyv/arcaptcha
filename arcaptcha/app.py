@@ -63,7 +63,14 @@ def create_app(config: AppConfig | None = None) -> Flask:
     if not config.catalog_path.exists():
         raise RuntimeError(f"catalog not found: {config.catalog_path}")
 
-    catalog = GameCatalog.load(config.catalog_path)
+    if config.force_game_id:
+        LOGGER.warning(
+            "force_game_id is set to '%s', overriding all catalog entries",
+            config.force_game_id,
+        )
+        catalog = GameCatalog.from_entries([config.force_game_id])
+    else:
+        catalog = GameCatalog.load(config.catalog_path)
     runtime_manager = DailyRuntimeManager(
         sync_service=sync_service,
         session_ttl_seconds=config.session_ttl_seconds,
@@ -271,15 +278,24 @@ def _register_api_routes(
             "runtime_manager"
         ]
         try:
+            data = _read_request_body()
             edition_date = resolve_edition_date(
-                _read_request_body().get("edition_date"),
+                data.get("edition_date"),
                 season_start=config.season_start,
                 now=datetime.now(timezone.utc),
             )
         except (ActionValidationError, EditionDateValidationError) as error:
             return _validation_error_response(str(error))
 
-        api_key = request.headers.get("X-API-Key", "anonymous")
+        api_key = request.headers.get("X-API-Key")
+        if not api_key:
+            body_api_key = data.get("api_key")
+            if isinstance(body_api_key, str):
+                api_key = body_api_key.strip() or None
+
+        if not api_key:
+            api_key = "anonymous"
+
         destroyed = runtime_manager.destroy_session(
             api_key,
             edition_date.isoformat(),

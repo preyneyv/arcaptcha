@@ -10,7 +10,6 @@ import {
   GAMEPLAY_SCALE,
   SCREEN_WIDTH,
   strokeRect,
-  type Framebuffer,
 } from "../framebuffer";
 import {
   getLevelScorePercent,
@@ -23,9 +22,6 @@ import {
 } from "../os";
 import { UI_COLORS } from "../palette";
 import type { SceneContext, SceneModule } from "./base";
-
-const INTER_LEVEL_WIPE_COLOR = 14;
-const INTER_LEVEL_WIPE_BAND_ROWS = 3;
 
 const STATUS_BAND_COLORS: Record<PostGameBand, number> = {
   red: 8,
@@ -126,91 +122,12 @@ function clampCoordinate(value: number, min: number, max: number): number {
 }
 
 export class PlaySceneModule implements SceneModule {
-  private interLevelTransitionFrom: Framebuffer | null = null;
-  private interLevelTransitionStartMs = 0;
+  constructor() {}
 
-  constructor(private readonly interLevelTransitionMs: number = 280) {}
-
-  onEnter(): void {
-    this.clearLocalAnimation();
-  }
+  onEnter(): void {}
 
   getSelection(): number | null {
     return null;
-  }
-
-  beginLocalAnimation(from: Framebuffer): void {
-    if (this.interLevelTransitionMs <= 0) {
-      return;
-    }
-
-    this.interLevelTransitionFrom = new Uint8Array(from);
-    this.interLevelTransitionStartMs = Date.now();
-  }
-
-  hasActiveLocalAnimation(): boolean {
-    return this.interLevelTransitionFrom !== null;
-  }
-
-  clearLocalAnimation(): void {
-    this.interLevelTransitionFrom = null;
-    this.interLevelTransitionStartMs = 0;
-  }
-
-  private createInterLevelTransitionFrame(
-    from: Framebuffer,
-    to: FirmwareFrame,
-    progress: number,
-  ): FirmwareFrame {
-    const composited = new Uint8Array(to.framebuffer);
-    const revealRows = Math.max(
-      0,
-      Math.min(GAMEPLAY_HEIGHT, Math.floor(GAMEPLAY_HEIGHT * progress)),
-    );
-
-    for (let y = revealRows; y < GAMEPLAY_HEIGHT; y += 1) {
-      const rowOffset = y * SCREEN_WIDTH;
-      for (let x = 0; x < SCREEN_WIDTH; x += 1) {
-        composited[rowOffset + x] = from[rowOffset + x] ?? 0;
-      }
-    }
-
-    const bandStart = Math.max(0, revealRows - INTER_LEVEL_WIPE_BAND_ROWS);
-    const bandEnd = Math.min(
-      GAMEPLAY_HEIGHT,
-      revealRows + INTER_LEVEL_WIPE_BAND_ROWS,
-    );
-    for (let y = bandStart; y < bandEnd; y += 1) {
-      const rowOffset = y * SCREEN_WIDTH;
-      for (let x = 0; x < SCREEN_WIDTH; x += 1) {
-        composited[rowOffset + x] = INTER_LEVEL_WIPE_COLOR;
-      }
-    }
-
-    return {
-      ...to,
-      framebuffer: composited,
-    };
-  }
-
-  private applyInterLevelTransition(nextFrame: FirmwareFrame): FirmwareFrame {
-    if (this.interLevelTransitionFrom === null) {
-      return nextFrame;
-    }
-
-    const elapsedMs = Date.now() - this.interLevelTransitionStartMs;
-    const progress = Math.min(1, elapsedMs / this.interLevelTransitionMs);
-
-    if (progress >= 1) {
-      this.clearLocalAnimation();
-      return nextFrame;
-    }
-
-    return this.createInterLevelTransitionFrame(
-      this.interLevelTransitionFrom,
-      nextFrame,
-      progress,
-    );
   }
 
   async dispatchAction(
@@ -218,6 +135,7 @@ export class PlaySceneModule implements SceneModule {
     context: SceneContext,
   ): Promise<void> {
     if (action === "HELP") {
+      await context.requestSceneTransition("help", { clearError: true });
       return;
     }
 
@@ -225,7 +143,13 @@ export class PlaySceneModule implements SceneModule {
       return;
     }
 
-    await context.runGameplayAction(action);
+    const result = await context.runGameplayAction(action);
+    if (result && result.nextScene !== "play") {
+      await context.requestSceneTransition(result.nextScene, {
+        defer: result.transitionDefer,
+        clearError: true,
+      });
+    }
   }
 
   async pressScreen(
@@ -258,10 +182,16 @@ export class PlaySceneModule implements SceneModule {
       63,
     );
 
-    await context.runGameplayAction("ACTION6", {
+    const result = await context.runGameplayAction("ACTION6", {
       x: targetX,
       y: targetY,
     });
+    if (result && result.nextScene !== "play") {
+      await context.requestSceneTransition(result.nextScene, {
+        defer: result.transitionDefer,
+        clearError: true,
+      });
+    }
   }
 
   render(model: FirmwareModel): FirmwareFrame {
@@ -332,11 +262,11 @@ export class PlaySceneModule implements SceneModule {
     );
     drawPerformanceHeatmap(framebuffer, model, progress);
 
-    return this.applyInterLevelTransition({
+    return {
       framebuffer,
       controls,
       hotspots: [],
       scene: "play",
-    });
+    };
   }
 }

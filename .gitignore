@@ -18,3 +18,4 @@ environment_files/
 recordings/
 
 aseprite/*
+.env

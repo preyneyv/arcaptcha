@@ -6,12 +6,9 @@ import {
   type BootstrappedSession,
   type CommandFrame,
   type DailyPuzzle,
-  type GameplayActionName,
+  type GameState,
 } from "../lib/api";
 import {
-  clearPersistedRunState,
-  readPersistedRunState,
-  writePersistedRunState,
   type PersistedActionLogEntry,
   type PersistedRunSessionState,
 } from "../lib/storage";
@@ -21,6 +18,7 @@ import {
   SCREEN_WIDTH,
   type Framebuffer,
 } from "./framebuffer";
+import { GameEnvironment, type RuntimeSession } from "./GameEnvironment";
 import {
   findHotspot,
   getLevelScorePercent,
@@ -29,7 +27,6 @@ import {
   type FirmwareFrame,
   type FirmwareModel,
   type HoverPoint,
-  type MenuActionId,
   type PostGameBand,
   type PostGameLevelMetric,
   type PostGameOutcome,
@@ -43,30 +40,15 @@ import {
   HelpSceneModule,
   PlaySceneModule,
   WinSceneModule,
+  type GameplayActionResult,
   type SceneContext,
   type SceneModule,
+  type SceneTransitionRequest,
 } from "./scenes";
 
-type BackendActionName = GameplayActionName;
-
-interface RuntimeSession {
-  gameId: string;
-  state: string;
-  frames: number[][][];
-  grid: number[][];
-  availableActions: ActionName[];
-  countedActions: number;
-  levelsCompleted: number;
-  winLevels: number;
-  levelActionCounts: number[];
-  currentLevelStartActionCount: number;
-  actionLog: PersistedActionLogEntry[];
-}
+type BackendActionName = Exclude<ActionName, "HELP">;
 
 interface FirmwareState {
-  daily: DailyPuzzle | null;
-  lockedDailyDate: string | null;
-  session: RuntimeSession | null;
   scene: SceneKind;
   booting: boolean;
   requestBusy: boolean;
@@ -123,7 +105,6 @@ export interface FirmwareTimings {
   framePlaybackMs: number;
   clickPulseMs: number;
   sceneTransitionMs: number;
-  interLevelTransitionMs: number;
 }
 
 export interface FirmwareDeps {
@@ -141,22 +122,11 @@ const DEFAULT_TIMINGS: FirmwareTimings = {
   framePlaybackMs: 1000 / 24,
   clickPulseMs: 140,
   sceneTransitionMs: 220,
-  interLevelTransitionMs: 280,
 };
 
 const SHARE_COPY_THROTTLE_MS = 300;
 
 export type ShareTransferMode = "none" | "clipboard" | "share-sheet";
-
-const FAILURE_STATES = new Set([
-  "FAIL",
-  "FAILED",
-  "LOSS",
-  "LOSE",
-  "LOST",
-  "GAME_OVER",
-  "GAMEOVER",
-]);
 
 const DEFAULT_SCHEDULER: FirmwareScheduler = {
   setTimeout: (fn, ms) => window.setTimeout(fn, ms),
@@ -190,34 +160,6 @@ export function isIosOrAndroidPlatform(): boolean {
   return isAndroid || isIOS || isIPadOS;
 }
 
-function preferSessionGameId(
-  currentGameId: string,
-  nextGameId: string,
-): string {
-  if (nextGameId && nextGameId.includes("-")) {
-    return nextGameId;
-  }
-
-  return currentGameId;
-}
-
-function toActionLogEntry(
-  action: BackendActionName,
-  extraData: Record<string, unknown>,
-): PersistedActionLogEntry {
-  const entry: PersistedActionLogEntry = { action };
-  if (action === "ACTION6") {
-    if (typeof extraData.x === "number" && Number.isFinite(extraData.x)) {
-      entry.x = Math.max(0, Math.trunc(extraData.x));
-    }
-    if (typeof extraData.y === "number" && Number.isFinite(extraData.y)) {
-      entry.y = Math.max(0, Math.trunc(extraData.y));
-    }
-  }
-
-  return entry;
-}
-
 function toSessionSnapshot(
   session: RuntimeSession | null,
   displayGrid: number[][] | null,
@@ -237,165 +179,12 @@ function toSessionSnapshot(
   };
 }
 
-function toPersistedRunSessionState(
-  session: RuntimeSession,
-): PersistedRunSessionState {
-  const levelsCompleted = Math.max(0, session.levelsCompleted);
-
-  return {
-    gameId: session.gameId,
-    state: session.state,
-    availableActions: session.availableActions,
-    grid: session.grid,
-    countedActions: Math.max(1, session.countedActions),
-    levelsCompleted,
-    winLevels: Math.max(1, session.winLevels),
-    levelActionCounts: session.levelActionCounts
-      .map((value) => Math.max(0, Math.trunc(value)))
-      .slice(0, levelsCompleted),
-    currentLevelStartActionCount: Math.max(
-      1,
-      Math.min(session.countedActions, session.currentLevelStartActionCount),
-    ),
-    actionLog: session.actionLog,
-  };
+function isWinStateValue(state: GameState): boolean {
+  return state === "WIN";
 }
 
-function toRuntimeSessionFromPersisted(
-  persistedSession: PersistedRunSessionState,
-): RuntimeSession {
-  return {
-    gameId: persistedSession.gameId,
-    state: persistedSession.state,
-    frames: [],
-    grid: persistedSession.grid,
-    availableActions: persistedSession.availableActions,
-    countedActions: Math.max(1, persistedSession.countedActions),
-    levelsCompleted: Math.max(0, persistedSession.levelsCompleted),
-    winLevels: Math.max(1, persistedSession.winLevels),
-    levelActionCounts: persistedSession.levelActionCounts
-      .map((value) => Math.max(0, Math.trunc(value)))
-      .slice(0, Math.max(0, persistedSession.levelsCompleted)),
-    currentLevelStartActionCount: Math.max(
-      1,
-      Math.min(
-        Math.max(1, persistedSession.countedActions),
-        persistedSession.currentLevelStartActionCount,
-      ),
-    ),
-    actionLog: persistedSession.actionLog,
-  };
-}
-
-function buildRuntimeSessionFromBootstrap(
-  bootstrapped: BootstrappedSession,
-  actionLog: PersistedActionLogEntry[],
-  metricsSeed?:
-    | Pick<
-        RuntimeSession,
-        "countedActions" | "levelActionCounts" | "currentLevelStartActionCount"
-      >
-    | Pick<
-        PersistedRunSessionState,
-        "countedActions" | "levelActionCounts" | "currentLevelStartActionCount"
-      >
-    | null,
-): RuntimeSession {
-  const countedActions = Math.max(1, actionLog.length + 1);
-  const canReuseMetrics =
-    metricsSeed !== undefined &&
-    metricsSeed !== null &&
-    Math.max(1, metricsSeed.countedActions) === countedActions;
-  const currentLevelStartActionCount = canReuseMetrics
-    ? Math.max(
-        1,
-        Math.min(countedActions, metricsSeed.currentLevelStartActionCount),
-      )
-    : countedActions;
-
-  return {
-    gameId: preferSessionGameId(
-      bootstrapped.daily.resolvedGameId,
-      bootstrapped.frame.gameId,
-    ),
-    state: bootstrapped.frame.state,
-    frames: bootstrapped.frame.frame,
-    grid: bootstrapped.frame.grid,
-    availableActions: bootstrapped.frame.availableActions,
-    countedActions,
-    levelsCompleted: bootstrapped.frame.levelsCompleted,
-    winLevels: bootstrapped.frame.winLevels,
-    levelActionCounts: canReuseMetrics
-      ? metricsSeed.levelActionCounts
-          .map((value) => Math.max(0, Math.trunc(value)))
-          .slice(0, Math.max(0, bootstrapped.frame.levelsCompleted))
-      : [],
-    currentLevelStartActionCount,
-    actionLog: actionLog.slice(),
-  };
-}
-
-function deriveLevelActionCounts(
-  previousSession: RuntimeSession,
-  nextCountedActions: number,
-  nextLevelsCompleted: number,
-): {
-  levelActionCounts: number[];
-  currentLevelStartActionCount: number;
-} {
-  if (
-    nextLevelsCompleted < previousSession.levelsCompleted ||
-    nextCountedActions < previousSession.countedActions
-  ) {
-    return {
-      levelActionCounts: [],
-      currentLevelStartActionCount: nextCountedActions,
-    };
-  }
-
-  const nextLevelActionCounts = previousSession.levelActionCounts.slice();
-  let nextCurrentLevelStartActionCount =
-    previousSession.currentLevelStartActionCount;
-
-  if (nextLevelsCompleted > previousSession.levelsCompleted) {
-    const completedDelta =
-      nextLevelsCompleted - previousSession.levelsCompleted;
-    const completedLevelActions = Math.max(
-      0,
-      nextCountedActions - previousSession.currentLevelStartActionCount,
-    );
-
-    nextLevelActionCounts.push(completedLevelActions);
-    for (let index = 1; index < completedDelta; index += 1) {
-      nextLevelActionCounts.push(0);
-    }
-
-    nextCurrentLevelStartActionCount = nextCountedActions;
-  }
-
-  if (nextLevelActionCounts.length > nextLevelsCompleted) {
-    nextLevelActionCounts.length = nextLevelsCompleted;
-  }
-
-  return {
-    levelActionCounts: nextLevelActionCounts,
-    currentLevelStartActionCount: nextCurrentLevelStartActionCount,
-  };
-}
-
-function normalizeSessionState(state: string): string {
-  return state.trim().toUpperCase();
-}
-
-function isWinStateValue(state: string): boolean {
-  return normalizeSessionState(state) === "WIN";
-}
-
-function isFailureStateValue(state: string): boolean {
-  const normalizedState = normalizeSessionState(state);
-  return (
-    FAILURE_STATES.has(normalizedState) || normalizedState.startsWith("FAIL")
-  );
+function isFailureStateValue(state: GameState): boolean {
+  return state === "GAME_OVER";
 }
 
 function hasGameplayActions(actions: readonly ActionName[]): boolean {
@@ -599,6 +388,7 @@ function getFrameSequence(session: RuntimeSession | null): number[][][] {
 
 export class Firmware {
   private readonly api: FirmwareApi;
+  private readonly environment: GameEnvironment;
   private readonly scheduler: FirmwareScheduler;
   private readonly timings: FirmwareTimings;
   private readonly ensurePlayerId?: () => string;
@@ -612,9 +402,6 @@ export class Firmware {
   private readonly errorScene = new ErrorSceneModule();
 
   private state: FirmwareState = {
-    daily: null,
-    lockedDailyDate: null,
-    session: null,
     scene: "help",
     booting: true,
     requestBusy: false,
@@ -633,7 +420,6 @@ export class Firmware {
   private playbackTimerId: number | null = null;
   private clickPulseTimerId: number | null = null;
   private postRenderSceneTimerId: number | null = null;
-  private localAnimationTimerId: number | null = null;
   private sceneTransitionTimerId: number | null = null;
   private sceneTransitionFrom: Framebuffer | null = null;
   private sceneTransitionTarget: SceneKind | null = null;
@@ -641,21 +427,20 @@ export class Firmware {
   private winCountdownTimerId: number | null = null;
   private pendingSceneAfterPlayback: SceneKind | null = null;
   private pendingSceneAfterRender: SceneKind | null = null;
-  private pendingPlaySceneAnimationAfterPlayback = false;
-  private pendingPlaySceneAnimationAfterRender = false;
   private lastShareCopyAtMs = 0;
   private disposed = false;
   private lifecycleId = 0;
 
   constructor(deps: FirmwareDeps) {
     this.api = deps.api;
+    this.environment = new GameEnvironment(this.api);
     this.ensurePlayerId = deps.ensurePlayerId;
     this.scheduler = deps.scheduler ?? DEFAULT_SCHEDULER;
     this.timings = {
       ...DEFAULT_TIMINGS,
       ...deps.timings,
     };
-    this.playScene = new PlaySceneModule(this.timings.interLevelTransitionMs);
+    this.playScene = new PlaySceneModule();
 
     this.helpScene.onEnter();
     this.aboutScene.onEnter();
@@ -719,12 +504,9 @@ export class Firmware {
     this.stopPlayback();
     this.stopClickPulse();
     this.clearQueuedSceneAfterRender();
-    this.stopLocalAnimationLoop();
     this.stopSceneTransition();
     this.stopWinCountdown();
     this.pendingSceneAfterPlayback = null;
-    this.clearQueuedPlaySceneAnimation();
-    this.playScene.clearLocalAnimation();
     this.state.requestBusy = false;
 
     for (const eventName of Object.keys(this.listeners) as Array<
@@ -739,7 +521,7 @@ export class Firmware {
   }
 
   getActiveEditionDate(): string | null {
-    return this.state.daily?.date ?? null;
+    return this.environment.daily?.date ?? null;
   }
 
   on<E extends keyof FirmwareEventMap>(
@@ -758,7 +540,8 @@ export class Firmware {
     }
 
     return (
-      toPostGameStats(this.state.session, this.state.daily)?.shareText ?? null
+      toPostGameStats(this.environment.session, this.environment.daily)
+        ?.shareText ?? null
     );
   }
 
@@ -831,11 +614,6 @@ export class Firmware {
       return;
     }
 
-    if (action === "HELP") {
-      this.enterHelpMenu(true);
-      return;
-    }
-
     await this.getActiveScene().dispatchAction(
       action,
       this.createSceneContext(),
@@ -904,8 +682,7 @@ export class Firmware {
     return (
       this.state.requestBusy ||
       this.state.playbackBusy ||
-      this.pendingSceneAfterRender !== null ||
-      this.hasActiveSceneLocalAnimation()
+      this.pendingSceneAfterRender !== null
     );
   }
 
@@ -914,124 +691,34 @@ export class Firmware {
   }
 
   private isDailyLockedOut(): boolean {
-    const dailyDate = this.state.daily?.date;
-    return Boolean(dailyDate && this.state.lockedDailyDate === dailyDate);
+    return this.environment.isDailyLockedOut();
   }
 
   private resetForEditionDate(targetEditionDate: string): string | null {
-    const currentEditionDate = this.state.daily?.date ?? null;
-    if (!currentEditionDate || currentEditionDate === targetEditionDate) {
+    const resetResult = this.environment.resetForEditionDate(targetEditionDate);
+    if (!resetResult.previousEditionDate) {
       return null;
     }
 
-    this.syncSession(null);
-    clearPersistedRunState();
-    this.state.daily = null;
-    this.state.lockedDailyDate = null;
+    this.syncSession(resetResult.previousSession, resetResult.session);
     this.state.error = null;
     this.state.hoverPoint = null;
     this.state.clickPoint = null;
     this.state.scene = "help";
     this.helpScene.onEnter();
-    return currentEditionDate;
-  }
-
-  private persistRunState(session: RuntimeSession | null): void {
-    const dailyDate = this.state.daily?.date;
-    if (!dailyDate) {
-      return;
-    }
-
-    const existing = readPersistedRunState();
-    if (!session) {
-      if (
-        existing &&
-        existing.dailyDate === dailyDate &&
-        existing.status === "in_progress"
-      ) {
-        clearPersistedRunState();
-      }
-      return;
-    }
-
-    const sessionState = toPersistedRunSessionState(session);
-    if (isPostGameSession(session)) {
-      writePersistedRunState({
-        version: 2,
-        dailyDate,
-        dailyGameId: this.state.daily?.gameId ?? session.gameId,
-        resolvedGameId: this.state.daily?.resolvedGameId ?? session.gameId,
-        baselineActions: this.state.daily?.baselineActions ?? null,
-        status: "completed",
-        session: sessionState,
-        completedAt: new Date().toISOString(),
-      });
-      this.state.lockedDailyDate = dailyDate;
-      return;
-    }
-
-    writePersistedRunState({
-      version: 2,
-      dailyDate,
-      dailyGameId: this.state.daily?.gameId ?? session.gameId,
-      resolvedGameId: this.state.daily?.resolvedGameId ?? session.gameId,
-      baselineActions: this.state.daily?.baselineActions ?? null,
-      status: "in_progress",
-      session: sessionState,
-    });
+    return resetResult.previousEditionDate;
   }
 
   private async restorePersistedRun(lifecycle: number): Promise<void> {
     const selectedEditionDate = getSelectedEditionDate();
-    const persisted = readPersistedRunState();
-    const replayActions =
-      persisted?.status === "in_progress" &&
-      persisted.dailyDate === selectedEditionDate
-        ? persisted.session.actionLog
-        : [];
-
-    const bootstrapped = await this.api.bootstrapDailySession({
-      editionDate: selectedEditionDate,
-      replayActions,
-    });
+    const restored =
+      await this.environment.initializeFromBoot(selectedEditionDate);
     if (!this.isLifecycleCurrent(lifecycle)) {
       return;
     }
 
-    this.state.daily = bootstrapped.daily;
+    this.syncSession(restored.previousSession, restored.session);
     this.state.error = null;
-
-    const isSameDayPersisted = Boolean(
-      persisted && persisted.dailyDate === selectedEditionDate,
-    );
-    if (persisted && !isSameDayPersisted) {
-      clearPersistedRunState();
-      this.state.lockedDailyDate = null;
-    }
-
-    if (persisted && isSameDayPersisted && persisted.status === "completed") {
-      const restoredSession = toRuntimeSessionFromPersisted(persisted.session);
-      this.syncSession(restoredSession);
-      this.state.lockedDailyDate = bootstrapped.daily.date;
-      this.state.scene = "help";
-      this.helpScene.onEnter();
-      this.renderAndEmit();
-      void this.api.unloadDailySession(bootstrapped.daily.date).catch(() => {
-        // Ignore best-effort unload failures after local completion.
-      });
-      return;
-    }
-
-    const restoredSession = buildRuntimeSessionFromBootstrap(
-      bootstrapped,
-      isSameDayPersisted && persisted?.status === "in_progress"
-        ? persisted.session.actionLog
-        : [],
-      isSameDayPersisted && persisted?.status === "in_progress"
-        ? persisted.session
-        : null,
-    );
-    this.syncSession(restoredSession);
     this.state.scene = "help";
     this.helpScene.onEnter();
     this.renderAndEmit();
@@ -1076,10 +763,16 @@ export class Firmware {
   private buildModel(): FirmwareModel {
     return {
       scene: this.state.scene,
-      daily: this.state.daily,
+      daily: this.environment.daily,
       dailyLocked: this.isDailyLockedOut(),
-      session: toSessionSnapshot(this.state.session, this.state.displayGrid),
-      postGame: toPostGameStats(this.state.session, this.state.daily),
+      session: toSessionSnapshot(
+        this.environment.session,
+        this.state.displayGrid,
+      ),
+      postGame: toPostGameStats(
+        this.environment.session,
+        this.environment.daily,
+      ),
       hoverPoint: this.getPointInteractivity(this.state.hoverPoint)
         ? this.state.hoverPoint
         : null,
@@ -1127,13 +820,15 @@ export class Firmware {
     return {
       isInputLocked: () => this.isInputLocked(),
       hasPendingSessionStart: () => this.startSessionPromise !== null,
-      hasSession: () => this.state.session !== null,
+      hasSession: () => this.environment.session !== null,
       canDispatchGameplayAction: (action: ActionName) =>
         Boolean(this.latestFrame.controls[action]),
       resetSession: (options?: { revealScene?: boolean }) =>
         this.resetSession(options),
-      activateMenuAction: (action: MenuActionId) =>
-        this.activateMenuAction(action),
+      requestSceneTransition: (
+        scene: SceneKind,
+        request?: SceneTransitionRequest,
+      ) => this.requestSceneTransition(scene, request),
       runGameplayAction: (
         action: Exclude<ActionName, "HELP">,
         extraData?: Record<string, unknown>,
@@ -1141,54 +836,58 @@ export class Firmware {
       pulseClickCursor: (point: HoverPoint) => {
         this.pulseClickCursor(point);
       },
-      enterHelpMenu: (clearError: boolean = false) => {
-        this.enterHelpMenu(clearError);
-      },
       requestRender: () => {
         this.renderAndEmit();
       },
     };
   }
 
+  private async requestSceneTransition(
+    scene: SceneKind,
+    request?: SceneTransitionRequest,
+  ): Promise<void> {
+    const defer = request?.defer ?? "now";
+    if (defer === "after-playback" && this.state.playbackBusy) {
+      this.queueSceneAfterPlayback(scene);
+      return;
+    }
+
+    if (defer === "after-render") {
+      this.queueSceneAfterRender(scene);
+      return;
+    }
+
+    if (scene === "play") {
+      await this.resumeOrStart();
+      return;
+    }
+
+    if (scene === "help") {
+      this.enterHelpMenu(request?.clearError ?? true);
+      return;
+    }
+
+    this.stopPlayback();
+    this.clearQueuedSceneAfterPlayback();
+    this.clearQueuedSceneAfterRender();
+    this.state.scene = scene;
+    if (request?.clearError) {
+      this.state.error = null;
+    }
+
+    if (scene === "about") {
+      this.aboutScene.onEnter();
+    } else if (scene === "win") {
+      this.winScene.onEnter();
+    } else if (scene === "error") {
+      this.errorScene.onEnter();
+    }
+
+    this.renderAndEmit();
+  }
+
   private renderCurrentScene(model: FirmwareModel): FirmwareFrame {
     return this.getActiveScene().render(model);
-  }
-
-  private hasActiveSceneLocalAnimation(): boolean {
-    return this.getActiveScene().hasActiveLocalAnimation?.() ?? false;
-  }
-
-  private startLocalAnimationLoop(): void {
-    if (this.localAnimationTimerId !== null) {
-      return;
-    }
-
-    this.localAnimationTimerId = this.scheduler.setInterval(() => {
-      if (this.disposed) {
-        return;
-      }
-
-      this.renderAndEmit();
-    }, 1000 / 60);
-  }
-
-  private stopLocalAnimationLoop(): void {
-    this.scheduler.clearInterval(this.localAnimationTimerId);
-    this.localAnimationTimerId = null;
-  }
-
-  private syncLocalAnimationLoop(): void {
-    if (this.hasActiveSceneLocalAnimation()) {
-      this.startLocalAnimationLoop();
-      return;
-    }
-
-    this.stopLocalAnimationLoop();
-  }
-
-  private clearQueuedPlaySceneAnimation(): void {
-    this.pendingPlaySceneAnimationAfterPlayback = false;
-    this.pendingPlaySceneAnimationAfterRender = false;
   }
 
   private queueSceneAfterRender(scene: SceneKind): void {
@@ -1221,40 +920,8 @@ export class Firmware {
         return;
       }
 
-      this.state.scene = targetScene;
-      this.renderAndEmit();
+      void this.requestSceneTransition(targetScene, { clearError: false });
     }, this.timings.framePlaybackMs);
-  }
-
-  private queuePlaySceneAnimationAfterPlayback(): void {
-    this.pendingPlaySceneAnimationAfterPlayback = true;
-  }
-
-  private queuePlaySceneAnimationAfterRender(): void {
-    this.pendingPlaySceneAnimationAfterRender = true;
-  }
-
-  private startQueuedPlaySceneAnimationAfterPlaybackIfReady(): void {
-    if (!this.pendingPlaySceneAnimationAfterPlayback) {
-      return;
-    }
-
-    this.pendingPlaySceneAnimationAfterPlayback = false;
-    this.queuePlaySceneAnimationAfterRender();
-  }
-
-  private startQueuedPlaySceneAnimationAfterRenderIfReady(): void {
-    if (!this.pendingPlaySceneAnimationAfterRender) {
-      return;
-    }
-
-    this.pendingPlaySceneAnimationAfterRender = false;
-    if (this.state.scene !== "play" || this.state.error) {
-      return;
-    }
-
-    this.playScene.beginLocalAnimation(this.latestFrame.framebuffer);
-    this.state.displayGrid = null;
   }
 
   private startSceneTransition(
@@ -1269,9 +936,6 @@ export class Firmware {
     this.sceneTransitionTarget = targetScene;
     this.sceneTransitionStartMs = Date.now();
     this.clearQueuedSceneAfterRender();
-    this.clearQueuedPlaySceneAnimation();
-    this.playScene.clearLocalAnimation();
-    this.stopLocalAnimationLoop();
 
     if (this.sceneTransitionTimerId !== null) {
       return;
@@ -1307,8 +971,9 @@ export class Firmware {
       return;
     }
 
-    this.state.scene = this.pendingSceneAfterPlayback;
+    const targetScene = this.pendingSceneAfterPlayback;
     this.clearQueuedSceneAfterPlayback();
+    void this.requestSceneTransition(targetScene, { clearError: false });
   }
 
   private createSceneTransitionFrame(
@@ -1374,10 +1039,6 @@ export class Firmware {
       this.startSceneTransition(this.latestFrame.framebuffer, nextFrame.scene);
     }
 
-    if (nextFrame.scene !== "play") {
-      this.playScene.clearLocalAnimation();
-    }
-
     nextFrame = this.applySceneTransition(nextFrame);
 
     this.latestFrame = nextFrame;
@@ -1385,8 +1046,6 @@ export class Firmware {
     this.snapshot = this.buildSnapshot(this.latestFrame);
     this.emit("snapshot", this.snapshot);
     this.startQueuedSceneAfterRenderIfReady();
-    this.startQueuedPlaySceneAnimationAfterRenderIfReady();
-    this.syncLocalAnimationLoop();
   }
 
   private startWinCountdown(): void {
@@ -1433,32 +1092,13 @@ export class Firmware {
     this.clickPulseTimerId = null;
   }
 
-  private syncSession(nextSession: RuntimeSession | null): void {
+  private syncSession(
+    previousSession: RuntimeSession | null,
+    nextSession: RuntimeSession | null,
+  ): void {
     this.stopPlayback();
     this.clearQueuedSceneAfterRender();
-    this.stopLocalAnimationLoop();
     this.clearQueuedSceneAfterPlayback();
-    this.clearQueuedPlaySceneAnimation();
-    this.playScene.clearLocalAnimation();
-    const previousSession = this.state.session;
-    this.state.session = nextSession;
-
-    if (
-      nextSession &&
-      isPostGameSession(nextSession) &&
-      this.state.daily?.date
-    ) {
-      this.state.lockedDailyDate = this.state.daily.date;
-    }
-
-    this.persistRunState(nextSession);
-
-    const shouldStartInterLevelTransition =
-      this.state.scene === "play" &&
-      previousSession !== null &&
-      nextSession !== null &&
-      !isPostGameSession(nextSession) &&
-      nextSession.levelsCompleted > previousSession.levelsCompleted;
 
     const frames = getFrameSequence(nextSession);
     if (frames.length === 0) {
@@ -1467,13 +1107,6 @@ export class Firmware {
     }
 
     this.state.displayGrid = frames[0] ?? null;
-    if (shouldStartInterLevelTransition) {
-      if (frames.length > 1) {
-        this.queuePlaySceneAnimationAfterPlayback();
-      } else {
-        this.queuePlaySceneAnimationAfterRender();
-      }
-    }
 
     if (frames.length === 1) {
       return;
@@ -1491,11 +1124,7 @@ export class Firmware {
 
       if (awaitingQueuedTransitionStart) {
         this.stopPlayback();
-        if (this.pendingSceneAfterPlayback !== null) {
-          this.startQueuedSceneAfterPlaybackIfReady();
-        } else {
-          this.startQueuedPlaySceneAnimationAfterPlaybackIfReady();
-        }
+        this.startQueuedSceneAfterPlaybackIfReady();
         this.renderAndEmit();
         return;
       }
@@ -1504,11 +1133,7 @@ export class Firmware {
       this.state.displayGrid = frames[frameIndex] ?? null;
 
       if (frameIndex >= lastFrameIndex) {
-        const hasQueuedTransition =
-          this.pendingSceneAfterPlayback !== null ||
-          this.pendingPlaySceneAnimationAfterPlayback;
-
-        if (hasQueuedTransition) {
+        if (this.pendingSceneAfterPlayback !== null) {
           awaitingQueuedTransitionStart = true;
         } else {
           this.stopPlayback();
@@ -1541,16 +1166,18 @@ export class Firmware {
     const targetEditionDate = options?.editionDate ?? getSelectedEditionDate();
     const previousEditionDate = this.resetForEditionDate(targetEditionDate);
     if (previousEditionDate) {
-      void this.api.unloadDailySession(previousEditionDate).catch(() => {
-        // Ignore best-effort unload failures during local edition rollover.
-      });
+      void this.environment
+        .unloadDailySession(previousEditionDate)
+        .catch(() => {
+          // Ignore best-effort unload failures during local edition rollover.
+        });
     }
 
     if (this.isDailyLockedOut()) {
       this.state.scene = "win";
       this.state.error = null;
       this.renderAndEmit();
-      return this.state.session;
+      return this.environment.session;
     }
 
     const revealScene = options?.revealScene ?? true;
@@ -1562,7 +1189,7 @@ export class Firmware {
 
     if (this.startSessionPromise) {
       await this.startSessionPromise;
-      return this.state.session;
+      return this.environment.session;
     }
 
     const lifecycle = this.lifecycleId;
@@ -1571,22 +1198,18 @@ export class Firmware {
       this.renderAndEmit();
 
       try {
-        const bootstrapped = await this.api.bootstrapDailySession({
+        const startResult = await this.environment.startSession({
           editionDate: targetEditionDate,
           replayActions,
+          metricsSeed: options?.metricsSeed ?? null,
         });
         if (!this.isLifecycleCurrent(lifecycle)) {
           return null;
         }
 
         const shouldReveal = this.pendingSessionReveal;
-        this.state.daily = bootstrapped.daily;
-        const openedSession = buildRuntimeSessionFromBootstrap(
-          bootstrapped,
-          replayActions,
-          options?.metricsSeed ?? null,
-        );
-        this.syncSession(openedSession);
+        const openedSession = startResult.session;
+        this.syncSession(startResult.previousSession, openedSession);
         if (shouldReveal) {
           this.state.scene = getSceneForSession(openedSession);
         }
@@ -1598,7 +1221,7 @@ export class Firmware {
           return null;
         }
 
-        if (!this.state.session) {
+        if (!this.environment.session) {
           this.state.scene = "help";
           this.helpScene.onEnter();
         }
@@ -1630,32 +1253,33 @@ export class Firmware {
     action: BackendActionName,
     extraData: Record<string, unknown> = {},
     options?: { revealScene?: boolean; allowRecover?: boolean },
-  ): Promise<void> {
+  ): Promise<GameplayActionResult | null> {
     const selectedEditionDate = getSelectedEditionDate();
     if (
-      this.state.daily?.date &&
-      this.state.daily.date !== selectedEditionDate
+      this.environment.daily?.date &&
+      this.environment.daily.date !== selectedEditionDate
     ) {
       await this.startSession({
         revealScene: true,
         editionDate: selectedEditionDate,
       });
-      return;
+      return null;
     }
 
     if (this.isDailyLockedOut()) {
-      this.state.scene = "win";
-      this.renderAndEmit();
-      return;
+      return {
+        nextScene: "win",
+        transitionDefer: "now",
+      };
     }
 
-    const activeSession = this.state.session;
+    const activeSession = this.environment.session;
     if (!activeSession) {
       await this.startSession({
         revealScene: true,
         editionDate: selectedEditionDate,
       });
-      return;
+      return null;
     }
 
     const lifecycle = this.lifecycleId;
@@ -1663,40 +1287,22 @@ export class Firmware {
     this.renderAndEmit();
 
     try {
-      const nextFrame = await this.api.sendAction(action, extraData, {
-        editionDate: this.state.daily?.date ?? selectedEditionDate,
+      const sessionChange = await this.environment.act(action, extraData, {
+        editionDate: this.environment.daily?.date ?? selectedEditionDate,
       });
       if (!this.isLifecycleCurrent(lifecycle)) {
-        return;
+        return null;
       }
 
-      const nextCountedActions = activeSession.countedActions + 1;
-      const nextActionLog = [
-        ...activeSession.actionLog,
-        toActionLogEntry(action, extraData),
-      ];
-
-      const nextSession: RuntimeSession = {
-        ...activeSession,
-        gameId: preferSessionGameId(activeSession.gameId, nextFrame.gameId),
-        state: nextFrame.state,
-        frames: nextFrame.frame,
-        grid: nextFrame.grid,
-        availableActions: nextFrame.availableActions,
-        countedActions: nextCountedActions,
-        levelsCompleted: nextFrame.levelsCompleted,
-        winLevels: nextFrame.winLevels,
-        actionLog: nextActionLog,
-        ...deriveLevelActionCounts(
-          activeSession,
-          nextCountedActions,
-          nextFrame.levelsCompleted,
-        ),
-      };
-      this.syncSession(nextSession);
+      const nextSession = sessionChange.session;
+      this.syncSession(sessionChange.previousSession, nextSession);
       this.state.error = null;
+
+      let gameplayResult: GameplayActionResult | null = null;
       if (options?.revealScene ?? this.state.scene !== "help") {
         const nextScene = getSceneForSession(nextSession);
+        let transitionDefer: GameplayActionResult["transitionDefer"] = "now";
+
         const shouldDelaySceneChangeUntilPlaybackCompletes =
           this.state.scene === "play" &&
           nextScene !== "play" &&
@@ -1708,17 +1314,22 @@ export class Firmware {
           nextSession.frames.length === 1;
 
         if (shouldDelaySceneChangeUntilPlaybackCompletes) {
-          this.queueSceneAfterPlayback(nextScene);
+          transitionDefer = "after-playback";
         } else if (shouldDelaySceneChangeUntilAfterCurrentRender) {
-          this.queueSceneAfterRender(nextScene);
-        } else {
-          this.state.scene = nextScene;
+          transitionDefer = "after-render";
         }
+
+        gameplayResult = {
+          nextScene,
+          transitionDefer,
+        };
       }
+
       this.renderAndEmit();
+      return gameplayResult;
     } catch (actionError) {
       if (!this.isLifecycleCurrent(lifecycle)) {
-        return;
+        return null;
       }
 
       if (
@@ -1729,61 +1340,57 @@ export class Firmware {
           revealScene: false,
           replayActions: activeSession.actionLog,
           metricsSeed: activeSession,
-          editionDate: this.state.daily?.date ?? selectedEditionDate,
+          editionDate: this.environment.daily?.date ?? selectedEditionDate,
         });
         if (!this.isLifecycleCurrent(lifecycle)) {
-          return;
+          return null;
         }
 
         if (recoveredSession) {
-          await this.runGameAction(action, extraData, {
+          return await this.runGameAction(action, extraData, {
             revealScene: options?.revealScene,
             allowRecover: false,
           });
-          return;
         }
       }
       this.state.error = getErrorMessage(actionError);
       this.renderAndEmit();
+      return null;
     } finally {
       if (!this.isLifecycleCurrent(lifecycle)) {
-        return;
+        return null;
       }
 
       this.state.requestBusy = false;
       this.renderAndEmit();
     }
+
+    return null;
   }
 
   private async resumeOrStart(): Promise<void> {
     const selectedEditionDate = getSelectedEditionDate();
     if (
-      this.state.daily?.date &&
-      this.state.daily.date !== selectedEditionDate
+      this.environment.daily?.date &&
+      this.environment.daily.date !== selectedEditionDate
     ) {
       await this.startSession({ editionDate: selectedEditionDate });
       return;
     }
 
     if (this.isDailyLockedOut()) {
-      this.clearQueuedPlaySceneAnimation();
-      this.playScene.clearLocalAnimation();
-      this.stopLocalAnimationLoop();
       this.state.scene = "win";
       this.state.error = null;
       this.renderAndEmit();
       return;
     }
 
-    if (!this.state.session) {
+    if (!this.environment.session) {
       await this.startSession({ editionDate: selectedEditionDate });
       return;
     }
 
-    this.clearQueuedPlaySceneAnimation();
-    this.playScene.clearLocalAnimation();
-    this.stopLocalAnimationLoop();
-    this.state.scene = getSceneForSession(this.state.session);
+    this.state.scene = getSceneForSession(this.environment.session);
     this.state.error = null;
     this.renderAndEmit();
   }
@@ -1793,8 +1400,8 @@ export class Firmware {
   }): Promise<void> {
     const selectedEditionDate = getSelectedEditionDate();
     if (
-      this.state.daily?.date &&
-      this.state.daily.date !== selectedEditionDate
+      this.environment.daily?.date &&
+      this.environment.daily.date !== selectedEditionDate
     ) {
       await this.startSession({
         revealScene: options?.revealScene ?? true,
@@ -1804,17 +1411,20 @@ export class Firmware {
     }
 
     if (this.isDailyLockedOut()) {
-      this.clearQueuedPlaySceneAnimation();
-      this.playScene.clearLocalAnimation();
-      this.stopLocalAnimationLoop();
       this.state.scene = "win";
       this.state.error = null;
       this.renderAndEmit();
       return;
     }
 
-    if (this.state.session) {
-      await this.runGameAction("RESET", {}, options);
+    if (this.environment.session) {
+      const result = await this.runGameAction("RESET", {}, options);
+      if (result && (options?.revealScene ?? true)) {
+        await this.requestSceneTransition(result.nextScene, {
+          defer: result.transitionDefer,
+          clearError: true,
+        });
+      }
       return;
     }
 
@@ -1826,35 +1436,12 @@ export class Firmware {
 
   private enterHelpMenu(clearError: boolean = false): void {
     this.clearQueuedSceneAfterRender();
-    this.clearQueuedPlaySceneAnimation();
-    this.playScene.clearLocalAnimation();
-    this.stopLocalAnimationLoop();
     this.state.scene = "help";
     this.helpScene.onEnter();
     if (clearError) {
       this.state.error = null;
     }
     this.renderAndEmit();
-  }
-
-  private async activateMenuAction(action: MenuActionId): Promise<void> {
-    if (action === "play") {
-      await this.resumeOrStart();
-      return;
-    }
-
-    if (action === "about") {
-      this.clearQueuedSceneAfterRender();
-      this.clearQueuedPlaySceneAnimation();
-      this.playScene.clearLocalAnimation();
-      this.stopLocalAnimationLoop();
-      this.state.scene = "about";
-      this.aboutScene.onEnter();
-      this.renderAndEmit();
-      return;
-    }
-
-    this.enterHelpMenu();
   }
 
   private pulseClickCursor(point: HoverPoint): void {

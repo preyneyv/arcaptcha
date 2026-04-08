@@ -183,7 +183,7 @@ export class WinSceneModule implements SceneModule {
     }
 
     if (action === "HELP") {
-      context.enterHelpMenu(true);
+      await context.requestSceneTransition("help", { clearError: true });
     }
   }
 

@@ -69,6 +69,7 @@ class AppConfig:
     host: str
     port: int
     debug: bool
+    force_game_id: str | None = None
 
     @property
     def environments_dir(self) -> Path:
@@ -105,4 +106,5 @@ class AppConfig:
             host=os.getenv("ARCAPTCHA_HOST", "127.0.0.1"),
             port=_read_int("ARCAPTCHA_PORT", 8000),
             debug=_read_bool("ARCAPTCHA_DEBUG", False),
+            force_game_id=os.getenv("ARCAPTCHA_FORCE_GAME_ID"),
         )

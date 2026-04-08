@@ -97,6 +97,23 @@ export class HelpSceneModule implements SceneModule {
     return selection === 1 ? "about" : "play";
   }
 
+  private async transitionForMenuAction(
+    action: MenuActionId,
+    context: SceneContext,
+  ): Promise<void> {
+    if (action === "about") {
+      await context.requestSceneTransition("about", { clearError: true });
+      return;
+    }
+
+    if (this.primaryVariant === "results") {
+      await context.requestSceneTransition("win", { clearError: true });
+      return;
+    }
+
+    await context.requestSceneTransition("play", { clearError: true });
+  }
+
   private getPrimarySprite(): Sprite {
     switch (this.primaryVariant) {
       case "resume":
@@ -150,7 +167,10 @@ export class HelpSceneModule implements SceneModule {
     }
 
     if (action === "ACTION5") {
-      await context.activateMenuAction(this.getMenuAction(this.selection));
+      await this.transitionForMenuAction(
+        this.getMenuAction(this.selection),
+        context,
+      );
     }
   }
 
@@ -165,7 +185,7 @@ export class HelpSceneModule implements SceneModule {
 
     const hotspot = findHotspot(frame.hotspots, point.x, point.y);
     if (hotspot?.kind === "action") {
-      await context.activateMenuAction(hotspot.action);
+      await this.transitionForMenuAction(hotspot.action, context);
     }
   }
 

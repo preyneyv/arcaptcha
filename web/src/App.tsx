@@ -229,8 +229,10 @@ export default function App() {
     };
 
     window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
     };
   }, [firmware]);
 

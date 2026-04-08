@@ -122,14 +122,18 @@ class DailyRuntimeManager:
             scorecard_id=f"arcaptcha-{daily_date}-{api_key[:16]}",
             save_recording=False,
             include_frame_data=True,
-            recordings_dir=str(self.sync_service.environments_dir.parent / "recordings"),
+            recordings_dir=str(
+                self.sync_service.environments_dir.parent / "recordings"
+            ),
             scorecard_manager=None,
             renderer=None,
         )
 
         frame = wrapper.observation_space
         if frame is None:
-            raise RuntimeError(f"failed to initialize environment {environment_info.game_id}")
+            raise RuntimeError(
+                f"failed to initialize environment {environment_info.game_id}"
+            )
 
         for replay_action in replay_actions:
             next_frame = wrapper.step(replay_action.action, data=replay_action.data)
@@ -179,7 +183,10 @@ class DailyRuntimeManager:
 
     def destroy_session(self, api_key: str, daily_date: str) -> bool:
         with self._sessions_lock:
-            return self._sessions.pop(self._session_key(api_key, daily_date), None) is not None
+            return (
+                self._sessions.pop(self._session_key(api_key, daily_date), None)
+                is not None
+            )
 
     def cleanup_stale(self) -> int:
         cutoff = datetime.now(timezone.utc) - self.session_ttl

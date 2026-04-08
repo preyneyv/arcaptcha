@@ -25,6 +25,8 @@ export type ActionName =
 
 export type GameplayActionName = Exclude<ActionName, "HELP">;
 
+export type GameState = "NOT_PLAYED" | "NOT_FINISHED" | "WIN" | "GAME_OVER";
+
 export interface ReplayActionEntry {
   action: GameplayActionName;
   x?: number;
@@ -40,7 +42,7 @@ export interface DailyPuzzle {
 
 export interface CommandFrame {
   gameId: string;
-  state: string;
+  state: GameState;
   levelsCompleted: number;
   winLevels: number;
   fullReset: boolean;
@@ -74,7 +76,7 @@ interface RawDailyPuzzle {
 
 interface RawCommandFrame {
   game_id: string;
-  state: string;
+  state: GameState;
   levels_completed: number;
   win_levels: number;
   full_reset: boolean;
@@ -261,12 +263,28 @@ export async function unloadDailySession(
 }
 
 export function keepAliveUnloadDailySession(editionDate?: string | null): void {
+  const payload = JSON.stringify({
+    edition_date: resolveEditionDate(editionDate),
+    api_key: getOrCreatePlayerId(),
+  });
+
+  if (
+    typeof navigator !== "undefined" &&
+    typeof navigator.sendBeacon === "function"
+  ) {
+    const accepted = navigator.sendBeacon(
+      buildApiUrl("/api/arcaptcha/unload"),
+      new Blob([payload], { type: "application/json" }),
+    );
+    if (accepted) {
+      return;
+    }
+  }
+
   void fetch(buildApiUrl("/api/arcaptcha/unload"), {
     method: "POST",
     headers: buildHeaders(),
-    body: JSON.stringify({
-      edition_date: resolveEditionDate(editionDate),
-    }),
+    body: payload,
     keepalive: true,
   }).catch(() => {
     // Ignore best-effort unload failures.

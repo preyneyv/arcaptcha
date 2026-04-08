@@ -54,7 +54,7 @@ export class ErrorSceneModule implements SceneModule {
       return;
     }
 
-    context.enterHelpMenu(true);
+    await context.requestSceneTransition("help", { clearError: true });
   }
 
   async pressScreen(

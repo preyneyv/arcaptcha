@@ -51,7 +51,7 @@ export class AboutSceneModule implements SceneModule {
     context: SceneContext,
   ): Promise<void> {
     if (action === "RESET" || action === "ACTION5") {
-      await context.activateMenuAction("back");
+      await context.requestSceneTransition("help", { clearError: true });
       return;
     }
 
@@ -79,7 +79,7 @@ export class AboutSceneModule implements SceneModule {
 
     const hotspot = findHotspot(frame.hotspots, point.x, point.y);
     if (hotspot?.kind === "action") {
-      await context.activateMenuAction(hotspot.action);
+      await context.requestSceneTransition("help", { clearError: true });
     } else if (hotspot?.kind === "link" && hotspot.href) {
       if (isIosOrAndroidPlatform()) {
         window.location.href = hotspot.href;

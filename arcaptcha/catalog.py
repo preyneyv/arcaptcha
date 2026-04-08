@@ -128,6 +128,13 @@ class GameCatalog:
             season_name=str(raw.get("season_name", "public-demo")), entries=entries
         )
 
+    @classmethod
+    def from_entries(cls, raw: Iterable[str]) -> "GameCatalog":
+        entries = tuple(CatalogEntry.from_raw(entry) for entry in raw)
+        if not entries:
+            raise ValueError("catalog must contain at least one game")
+        return cls(season_name="custom", entries=entries)
+
     def environment_index(
         self,
         environments: Iterable[EnvironmentInfo],
