@@ -228,7 +228,7 @@ export class WinSceneModule implements SceneModule {
       framebuffer,
       4,
       48,
-      `${stats.scorePercent}`,
+      stats.scorePercent === null ? "--" : `${stats.scorePercent}`,
       UI_COLORS.text,
       "large",
     );
@@ -246,7 +246,7 @@ export class WinSceneModule implements SceneModule {
       framebuffer,
       128 - 4,
       48,
-      `${stats.baselineActions}`,
+      stats.baselineActions === null ? "--" : `${stats.baselineActions}`,
       UI_COLORS.text,
       "large",
     );

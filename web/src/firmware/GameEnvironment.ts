@@ -106,14 +106,17 @@ export function isPostGameSession(session: RuntimeSession | null): boolean {
     return false;
   }
 
+  const requiredWins = Math.max(1, session.winLevels);
+
   if (isWinStateValue(session.state) || isFailureStateValue(session.state)) {
     return true;
   }
 
-  return (
-    !hasGameplayActions(session.availableActions) &&
-    session.levelsCompleted < Math.max(1, session.winLevels)
-  );
+  if (session.levelsCompleted >= requiredWins) {
+    return true;
+  }
+
+  return !hasGameplayActions(session.availableActions);
 }
 
 export function preferSessionGameId(

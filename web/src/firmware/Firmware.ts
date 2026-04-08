@@ -6,7 +6,6 @@ import {
   type BootstrappedSession,
   type CommandFrame,
   type DailyPuzzle,
-  type GameState,
 } from "../lib/api";
 import {
   type PersistedActionLogEntry,
@@ -18,7 +17,12 @@ import {
   SCREEN_WIDTH,
   type Framebuffer,
 } from "./framebuffer";
-import { GameEnvironment, type RuntimeSession } from "./GameEnvironment";
+import {
+  GameEnvironment,
+  isPostGameSession,
+  isWinStateValue,
+  type RuntimeSession,
+} from "./GameEnvironment";
 import {
   findHotspot,
   getLevelScorePercent,
@@ -179,35 +183,6 @@ function toSessionSnapshot(
   };
 }
 
-function isWinStateValue(state: GameState): boolean {
-  return state === "WIN";
-}
-
-function isFailureStateValue(state: GameState): boolean {
-  return state === "GAME_OVER";
-}
-
-function hasGameplayActions(actions: readonly ActionName[]): boolean {
-  return actions.some((action) => action !== "HELP" && action !== "RESET");
-}
-
-function isPostGameSession(session: RuntimeSession | null): boolean {
-  if (!session) {
-    return false;
-  }
-
-  if (isWinStateValue(session.state) || isFailureStateValue(session.state)) {
-    return true;
-  }
-
-  // Fallback: a locked-out session that has no gameplay actions before full completion
-  // is treated as a failed run so we can show post-game diagnostics.
-  return (
-    !hasGameplayActions(session.availableActions) &&
-    session.levelsCompleted < Math.max(1, session.winLevels)
-  );
-}
-
 function getSceneForSession(session: RuntimeSession | null): SceneKind {
   if (isPostGameSession(session)) {
     return "win";
@@ -298,10 +273,10 @@ function toPostGameStats(
     return null;
   }
 
-  const outcome: PostGameOutcome = isWinStateValue(session.state)
-    ? "win"
-    : "fail";
   const winLevels = Math.max(1, session.winLevels);
+  const reachedWinGoal = session.levelsCompleted >= winLevels;
+  const outcome: PostGameOutcome =
+    isWinStateValue(session.state) || reachedWinGoal ? "win" : "fail";
   const levelsCompleted = Math.max(
     0,
     Math.min(session.levelsCompleted, winLevels),
@@ -680,6 +655,7 @@ export class Firmware {
 
   private isInputLocked(): boolean {
     return (
+      this.state.booting ||
       this.state.requestBusy ||
       this.state.playbackBusy ||
       this.pendingSceneAfterRender !== null
@@ -854,6 +830,9 @@ export class Firmware {
 
     if (defer === "after-render") {
       this.queueSceneAfterRender(scene);
+      // Schedule immediately so deferred scene changes cannot be stranded
+      // waiting for a future render tick that may never happen.
+      this.startQueuedSceneAfterRenderIfReady();
       return;
     }
 
@@ -1301,17 +1280,18 @@ export class Firmware {
       let gameplayResult: GameplayActionResult | null = null;
       if (options?.revealScene ?? this.state.scene !== "help") {
         const nextScene = getSceneForSession(nextSession);
+        const frameSequenceLength = getFrameSequence(nextSession).length;
         let transitionDefer: GameplayActionResult["transitionDefer"] = "now";
 
         const shouldDelaySceneChangeUntilPlaybackCompletes =
           this.state.scene === "play" &&
           nextScene !== "play" &&
-          nextSession.frames.length > 1;
+          frameSequenceLength > 1;
 
         const shouldDelaySceneChangeUntilAfterCurrentRender =
           this.state.scene === "play" &&
           nextScene !== "play" &&
-          nextSession.frames.length === 1;
+          frameSequenceLength === 1;
 
         if (shouldDelaySceneChangeUntilPlaybackCompletes) {
           transitionDefer = "after-playback";

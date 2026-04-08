@@ -151,6 +151,7 @@ export default function App() {
     DEFAULT_CONSOLE_PRESSED_STATE,
   );
   const pressedKeysRef = useRef<Set<string>>(new Set());
+  const unloadRequestedRef = useRef(false);
 
   const dispatchShareFeedbackIfNeeded = useCallback(
     (action: ActionName, mode: ShareTransferMode) => {
@@ -225,6 +226,11 @@ export default function App() {
 
   useEffect(() => {
     const handlePageHide = () => {
+      if (unloadRequestedRef.current) {
+        return;
+      }
+
+      unloadRequestedRef.current = true;
       keepAliveUnloadDailySession(firmware.getActiveEditionDate());
     };
 
