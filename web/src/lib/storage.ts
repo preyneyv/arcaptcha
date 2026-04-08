@@ -1,4 +1,4 @@
-import type { ActionName } from "./api";
+import type { ActionName, GameplayActionName, ReplayActionEntry } from "./api";
 
 export interface PlayerStore {
   version: 2;
@@ -7,10 +7,10 @@ export interface PlayerStore {
 
 export type PersistedRunStatus = "in_progress" | "completed";
 
+export interface PersistedActionLogEntry extends ReplayActionEntry {}
+
 export interface PersistedRunSessionState {
-  cardId: string;
   gameId: string;
-  guid: string | null;
   state: string;
   availableActions: ActionName[];
   grid: number[][];
@@ -19,11 +19,15 @@ export interface PersistedRunSessionState {
   winLevels: number;
   levelActionCounts: number[];
   currentLevelStartActionCount: number;
+  actionLog: PersistedActionLogEntry[];
 }
 
 export interface PersistedRunState {
-  version: 1;
+  version: 2;
   dailyDate: string;
+  dailyGameId: string;
+  resolvedGameId: string;
+  baselineActions: number[] | null;
   status: PersistedRunStatus;
   session: PersistedRunSessionState;
   completedAt?: string;
@@ -31,7 +35,8 @@ export interface PersistedRunState {
 
 const STORAGE_KEY = "arcaptcha.v2";
 const LEGACY_STORAGE_KEY = "arcaptcha.v1";
-const RUN_STORAGE_KEY = "arcaptcha.run.v1";
+const RUN_STORAGE_KEY = "arcaptcha.run.v2";
+const LEGACY_RUN_STORAGE_KEY = "arcaptcha.run.v1";
 const ALLOWED_ACTIONS: readonly ActionName[] = [
   "RESET",
   "ACTION1",
@@ -42,6 +47,16 @@ const ALLOWED_ACTIONS: readonly ActionName[] = [
   "ACTION6",
   "ACTION7",
   "HELP",
+];
+const ALLOWED_REPLAY_ACTIONS: readonly GameplayActionName[] = [
+  "RESET",
+  "ACTION1",
+  "ACTION2",
+  "ACTION3",
+  "ACTION4",
+  "ACTION5",
+  "ACTION6",
+  "ACTION7",
 ];
 
 function defaultStore(): PlayerStore {
@@ -105,28 +120,65 @@ function parsePersistedGrid(raw: unknown): number[][] {
     .map((row) => row.map((cell) => toNonNegativeInt(cell, 0)));
 }
 
+function parseBaselineActions(raw: unknown): number[] | null {
+  if (!Array.isArray(raw)) {
+    return null;
+  }
+
+  return raw.map((value) => toNonNegativeInt(value, 0));
+}
+
+function parseActionLog(raw: unknown): PersistedActionLogEntry[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const allowed = new Set(ALLOWED_REPLAY_ACTIONS);
+  const entries: PersistedActionLogEntry[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const source = item as Record<string, unknown>;
+    const action = source.action;
+    if (typeof action !== "string" || !allowed.has(action as GameplayActionName)) {
+      continue;
+    }
+
+    const entry: PersistedActionLogEntry = {
+      action: action as GameplayActionName,
+    };
+    if (entry.action === "ACTION6") {
+      entry.x = toNonNegativeInt(source.x, 0);
+      entry.y = toNonNegativeInt(source.y, 0);
+    }
+
+    entries.push(entry);
+  }
+
+  return entries;
+}
+
 function parseRunSession(raw: unknown): PersistedRunSessionState | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
 
   const source = raw as Record<string, unknown>;
-  if (typeof source.cardId !== "string" || !source.cardId) {
-    return null;
-  }
-
   if (typeof source.gameId !== "string" || !source.gameId) {
     return null;
   }
 
-  const guid = typeof source.guid === "string" ? source.guid : null;
   const state =
     typeof source.state === "string" && source.state ? source.state : "RUNNING";
   const availableActions = parseAvailableActions(source.availableActions);
   const grid = parsePersistedGrid(source.grid);
+  const actionLog = parseActionLog(source.actionLog);
   const countedActions = Math.max(
     1,
-    toNonNegativeInt(source.countedActions, 1),
+    toNonNegativeInt(source.countedActions, actionLog.length + 1),
   );
   const levelsCompleted = toNonNegativeInt(source.levelsCompleted, 0);
   const winLevels = Math.max(1, toNonNegativeInt(source.winLevels, 1));
@@ -142,9 +194,7 @@ function parseRunSession(raw: unknown): PersistedRunSessionState | null {
   );
 
   return {
-    cardId: source.cardId,
     gameId: source.gameId,
-    guid,
     state,
     availableActions,
     grid,
@@ -153,6 +203,7 @@ function parseRunSession(raw: unknown): PersistedRunSessionState | null {
     winLevels,
     levelActionCounts,
     currentLevelStartActionCount,
+    actionLog,
   };
 }
 
@@ -168,6 +219,14 @@ function safeParseRun(raw: string | null): PersistedRunState | null {
     }
 
     if (typeof parsed.dailyDate !== "string" || !parsed.dailyDate) {
+      return null;
+    }
+
+    if (typeof parsed.dailyGameId !== "string" || !parsed.dailyGameId) {
+      return null;
+    }
+
+    if (typeof parsed.resolvedGameId !== "string" || !parsed.resolvedGameId) {
       return null;
     }
 
@@ -190,8 +249,11 @@ function safeParseRun(raw: string | null): PersistedRunState | null {
         : undefined;
 
     return {
-      version: 1,
+      version: 2,
       dailyDate: parsed.dailyDate,
+      dailyGameId: parsed.dailyGameId,
+      resolvedGameId: parsed.resolvedGameId,
+      baselineActions: parseBaselineActions(parsed.baselineActions),
       status,
       session,
       completedAt,
@@ -241,8 +303,10 @@ export function readPersistedRunState(): PersistedRunState | null {
 
 export function writePersistedRunState(state: PersistedRunState): void {
   localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(state));
+  localStorage.removeItem(LEGACY_RUN_STORAGE_KEY);
 }
 
 export function clearPersistedRunState(): void {
   localStorage.removeItem(RUN_STORAGE_KEY);
+  localStorage.removeItem(LEGACY_RUN_STORAGE_KEY);
 }

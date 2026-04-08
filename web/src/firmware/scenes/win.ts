@@ -37,7 +37,7 @@ const BAND_COLORS: Record<PostGameBand, number> = {
 
 const COPIED_LABEL_DURATION_MS = 1200;
 
-function parseDailyDateToUtcMs(
+function parseDailyDateToLocalMs(
   dailyDate: string | null | undefined,
 ): number | null {
   if (!dailyDate) {
@@ -60,7 +60,7 @@ function parseDailyDateToUtcMs(
     return null;
   }
 
-  return Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0);
+  return new Date(year, month - 1, day + 1, 0, 0, 0, 0).getTime();
 }
 
 function formatCountdownMs(remainingMs: number): string {
@@ -76,12 +76,12 @@ function formatCountdownMs(remainingMs: number): string {
 }
 
 function getResetCountdownLabel(dailyDate: string | null | undefined): string {
-  const nextResetUtcMs = parseDailyDateToUtcMs(dailyDate);
-  if (nextResetUtcMs === null) {
+  const nextResetLocalMs = parseDailyDateToLocalMs(dailyDate);
+  if (nextResetLocalMs === null) {
     return "--:--:--";
   }
 
-  return formatCountdownMs(nextResetUtcMs - Date.now());
+  return formatCountdownMs(nextResetLocalMs - Date.now());
 }
 
 function createControlState(defaultValue: boolean = false): ControlState {

@@ -23,6 +23,14 @@ export type ActionName =
   | "ACTION7" // undo
   | "HELP"; // help
 
+export type GameplayActionName = Exclude<ActionName, "HELP">;
+
+export interface ReplayActionEntry {
+  action: GameplayActionName;
+  x?: number;
+  y?: number;
+}
+
 export interface DailyPuzzle {
   date: string;
   gameId: string;
@@ -35,17 +43,15 @@ export interface CommandFrame {
   state: string;
   levelsCompleted: number;
   winLevels: number;
-  guid: string | null;
   fullReset: boolean;
   availableActions: ActionName[];
   frame: number[][][];
   grid: number[][];
 }
 
-export interface PlaySession {
-  cardId: string;
-  gameId: string;
-  guid: string | null;
+export interface BootstrappedSession {
+  daily: DailyPuzzle;
+  frame: CommandFrame;
 }
 
 const ACTION_NAMES_BY_CODE: Record<number, ActionName> = {
@@ -71,17 +77,33 @@ interface RawCommandFrame {
   state: string;
   levels_completed: number;
   win_levels: number;
-  guid: string | null;
   full_reset: boolean;
   available_actions: number[];
   frame: number[][][];
 }
 
-interface RawGameInfo {
-  game_id?: string;
-}
+type RawBootstrapPayload = RawDailyPuzzle & RawCommandFrame;
 
 const API_ROOT = normalizeApiRoot(import.meta.env.VITE_API_ROOT);
+
+interface ApiRequestOptions {
+  method?: string;
+  body?: unknown;
+  headers?: HeadersInit;
+  keepalive?: boolean;
+}
+
+function formatDatePart(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+export function getSelectedEditionDate(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${formatDatePart(now.getMonth() + 1)}-${formatDatePart(now.getDate())}`;
+}
+
+function resolveEditionDate(editionDate?: string | null): string {
+  return editionDate || getSelectedEditionDate();
+}
 
 function normalizeApiRoot(raw: string | undefined): string {
   if (!raw) {
@@ -100,6 +122,20 @@ function buildHeaders(initHeaders?: HeadersInit): Headers {
   headers.set("Content-Type", "application/json");
   headers.set("X-API-Key", getOrCreatePlayerId());
   return headers;
+}
+
+async function apiRequest<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<T> {
+  const response = await fetch(buildApiUrl(path), {
+    method: options.method ?? "GET",
+    headers: buildHeaders(options.headers),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    keepalive: options.keepalive,
+  });
+
+  return readJson<T>(response);
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -157,7 +193,6 @@ function mapFrame(raw: RawCommandFrame): CommandFrame {
     state: raw.state,
     levelsCompleted: raw.levels_completed,
     winLevels: raw.win_levels,
-    guid: raw.guid,
     fullReset: raw.full_reset,
     availableActions: raw.available_actions
       .map((actionCode) => ACTION_NAMES_BY_CODE[actionCode])
@@ -167,98 +202,81 @@ function mapFrame(raw: RawCommandFrame): CommandFrame {
   };
 }
 
-export async function fetchDailyPuzzle(): Promise<DailyPuzzle> {
-  const response = await fetch(buildApiUrl("/api/arcaptcha/daily"), {
-    headers: buildHeaders(),
-  });
-  return mapDailyPuzzle(await readJson<RawDailyPuzzle>(response));
-}
-
-export async function resolveGameId(gameId: string): Promise<string> {
-  if (!gameId || gameId.includes("-")) {
-    return gameId;
+export async function bootstrapDailySession(
+  options: {
+    editionDate?: string | null;
+    replayActions?: ReplayActionEntry[];
+  } = {},
+): Promise<BootstrappedSession> {
+  const payload: Record<string, unknown> = {
+    edition_date: resolveEditionDate(options.editionDate),
+  };
+  if (options.replayActions && options.replayActions.length > 0) {
+    payload.replay_actions = options.replayActions;
   }
 
-  const response = await fetch(
-    buildApiUrl(`/api/games/${encodeURIComponent(gameId)}`),
+  const raw = await apiRequest<RawBootstrapPayload>(
+    "/api/arcaptcha/bootstrap",
     {
-      headers: buildHeaders(),
+      method: "POST",
+      body: payload,
     },
   );
-  const payload = await readJson<RawGameInfo>(response);
-
-  return typeof payload.game_id === "string" && payload.game_id
-    ? payload.game_id
-    : gameId;
-}
-
-export async function openScorecard(): Promise<{ cardId: string }> {
-  const response = await fetch(buildApiUrl("/api/scorecard/open"), {
-    method: "POST",
-    headers: buildHeaders(),
-    body: JSON.stringify({
-      tags: ["human", "web"],
-      source_url: window.location.origin,
-    }),
-  });
-  const payload = await readJson<{ card_id: string }>(response);
-  return { cardId: payload.card_id };
+  return {
+    daily: mapDailyPuzzle(raw),
+    frame: mapFrame(raw),
+  };
 }
 
 export async function sendAction(
-  action: ActionName,
-  session: PlaySession,
+  action: GameplayActionName,
   extraData: Record<string, unknown> = {},
+  options: {
+    editionDate?: string | null;
+  } = {},
 ): Promise<CommandFrame> {
   const payload: Record<string, unknown> = {
-    game_id: session.gameId,
-    card_id: session.cardId,
+    action,
+    edition_date: resolveEditionDate(options.editionDate),
     ...extraData,
   };
 
-  if (session.guid) {
-    payload.guid = session.guid;
-  }
+  return mapFrame(
+    await apiRequest<RawCommandFrame>("/api/arcaptcha/action", {
+      method: "POST",
+      body: payload,
+    }),
+  );
+}
 
-  const response = await fetch(buildApiUrl(`/api/cmd/${action}`), {
+export async function unloadDailySession(
+  editionDate?: string | null,
+): Promise<void> {
+  await apiRequest<{ status: string }>("/api/arcaptcha/unload", {
+    method: "POST",
+    body: {
+      edition_date: resolveEditionDate(editionDate),
+    },
+  });
+}
+
+export function keepAliveUnloadDailySession(editionDate?: string | null): void {
+  void fetch(buildApiUrl("/api/arcaptcha/unload"), {
     method: "POST",
     headers: buildHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      edition_date: resolveEditionDate(editionDate),
+    }),
+    keepalive: true,
+  }).catch(() => {
+    // Ignore best-effort unload failures.
   });
-  return mapFrame(await readJson<RawCommandFrame>(response));
 }
 
-export async function openPlaySession(gameId: string): Promise<{
-  session: PlaySession;
-  frame: CommandFrame;
-}> {
-  const resolvedGameId = await resolveGameId(gameId);
-  const scorecard = await openScorecard();
-  const frame = await sendAction("RESET", {
-    cardId: scorecard.cardId,
-    gameId: resolvedGameId,
-    guid: null,
-  });
+export function isSessionMissingError(error: unknown): boolean {
+  if (!(error instanceof ApiRequestError)) {
+    return false;
+  }
 
-  return {
-    session: {
-      cardId: scorecard.cardId,
-      gameId: frame.gameId || resolvedGameId,
-      guid: frame.guid,
-    },
-    frame,
-  };
-}
-
-export async function validatePlaySession(session: PlaySession): Promise<void> {
-  const response = await fetch(
-    buildApiUrl(
-      `/api/scorecard/${encodeURIComponent(session.cardId)}/${encodeURIComponent(session.gameId)}`,
-    ),
-    {
-      headers: buildHeaders(),
-    },
-  );
-
-  await readJson<unknown>(response);
+  return error.code === "SESSION_MISSING" || error.status === 404;
 }

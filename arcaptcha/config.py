@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from arc_agi import OperationMode
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -43,18 +41,6 @@ def _read_date(name: str, default: date) -> date:
         return default
 
 
-def _read_operation_mode(name: str, default: OperationMode) -> OperationMode:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-
-    normalized = raw.strip().lower()
-    for mode in OperationMode:
-        if mode.value == normalized:
-            return mode
-    return default
-
-
 def _read_origins(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     raw = os.getenv(name)
     if raw is None:
@@ -75,12 +61,14 @@ class AppConfig:
     frontend_dist_dir: Path
     frontend_dev_url: str | None
     cors_allowed_origins: tuple[str, ...]
-    operation_mode: OperationMode
+    arc_base_url: str
+    arc_api_key: str
+    arc_request_timeout_seconds: int
+    session_ttl_seconds: int
     season_start: date
     host: str
     port: int
     debug: bool
-    archive_window_days: int
 
     @property
     def environments_dir(self) -> Path:
@@ -103,16 +91,18 @@ class AppConfig:
                 "ARCAPTCHA_CORS_ORIGINS",
                 ("https://arcaptcha.io",),
             ),
-            operation_mode=_read_operation_mode(
-                "ARCAPTCHA_OPERATION_MODE",
-                OperationMode.NORMAL,
+            arc_base_url=os.getenv("ARC_BASE_URL", "https://three.arcprize.org"),
+            arc_api_key=os.getenv("ARC_API_KEY", ""),
+            arc_request_timeout_seconds=max(
+                1,
+                _read_int("ARCAPTCHA_ARC_REQUEST_TIMEOUT_SECONDS", 10),
+            ),
+            session_ttl_seconds=max(
+                30,
+                _read_int("ARCAPTCHA_SESSION_TTL_SECONDS", 900),
             ),
             season_start=_read_date("ARCAPTCHA_SEASON_START", date(2026, 4, 4)),
             host=os.getenv("ARCAPTCHA_HOST", "127.0.0.1"),
             port=_read_int("ARCAPTCHA_PORT", 8000),
             debug=_read_bool("ARCAPTCHA_DEBUG", False),
-            archive_window_days=max(
-                7,
-                _read_int("ARCAPTCHA_ARCHIVE_WINDOW_DAYS", 45),
-            ),
         )

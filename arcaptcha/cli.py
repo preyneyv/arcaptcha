@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from app import create_app
-from arc_agi import Arcade
 from catalog import GameCatalog
 from config import AppConfig
+from edition import EditionDateValidationError, resolve_edition_date
+from environment_sync import EnvironmentSyncService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +24,13 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int)
     serve_parser.add_argument("--debug", action="store_true")
 
-    subparsers.add_parser("daily", help="print the currently scheduled daily puzzle")
+    daily_parser = subparsers.add_parser(
+        "daily", help="print the currently selected daily puzzle"
+    )
+    daily_parser.add_argument(
+        "--edition-date",
+        help="ISO date for the playable edition to inspect",
+    )
     subparsers.add_parser("season", help="print the current season schedule")
     return parser
 
@@ -36,32 +43,31 @@ def main(argv: Sequence[str] | None = None) -> None:
     config = AppConfig.from_env()
 
     if command in {"daily", "season"}:
-        arcade = Arcade(
-            operation_mode=config.operation_mode,
-            environments_dir=str(config.environments_dir),
-            recordings_dir=str(config.recordings_dir),
+        sync_service = EnvironmentSyncService(
+            environments_dir=config.environments_dir,
+            arc_base_url=config.arc_base_url,
+            arc_api_key=config.arc_api_key,
+            request_timeout_seconds=config.arc_request_timeout_seconds,
+            logger=LOGGER,
         )
-        environments = ()
-        try:
-            environments = tuple(arcade.get_environments())
-        except Exception as error:
-            LOGGER.warning(
-                "failed to fetch available games for daily output: %s", error
-            )
-
-        if environments:
-            GameCatalog.write_from_environments(
-                config.catalog_path,
-                environments,
-                season_name="arc-agi",
-            )
+        sync_service.refresh_local_index()
 
         catalog = GameCatalog.load(config.catalog_path)
-        environment_index = catalog.environment_index(environments)
+        local_environments = sync_service.get_local_environments()
+        environment_index = catalog.environment_index(local_environments)
 
         if command == "daily":
             now = datetime.now(timezone.utc)
-            scheduled = catalog.current(now, config.season_start)
+            try:
+                edition_date = resolve_edition_date(
+                    getattr(args, "edition_date", None),
+                    season_start=config.season_start,
+                    now=now,
+                )
+            except EditionDateValidationError as error:
+                parser.error(str(error))
+
+            scheduled = catalog.for_date(edition_date, config.season_start)
             environment = environment_index.get(scheduled.entry.game_id)
             payload = scheduled.to_payload(environment)
         else:

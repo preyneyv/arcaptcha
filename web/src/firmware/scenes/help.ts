@@ -16,6 +16,7 @@ import {
   type MenuActionId,
 } from "../os";
 import { UI_COLORS } from "../palette";
+import type { Sprite } from "../sprites";
 import {
   SPIRTE_PLAY,
   SPRITE_CONTROLS_CIRCLE,
@@ -27,13 +28,17 @@ import {
   SPRITE_CONTROLS_DPAD_UP,
   SPRITE_CONTROLS_TOUCH,
   SPRITE_LOGO,
+  SPRITE_RESULT,
+  SPRITE_RESUME,
 } from "../sprites";
 import type { SceneContext, SceneModule } from "./base";
 
 const MENU_ITEMS: readonly HelpLink[] = [
-  { id: "play", label: "PLAY" },
+  { id: "primary", label: "PRIMARY" },
   { id: "about", label: "ABOUT" },
 ];
+
+type HelpPrimaryVariant = "play" | "resume" | "results";
 
 function createControlState(defaultValue: boolean = false): ControlState {
   return {
@@ -47,10 +52,6 @@ function createControlState(defaultValue: boolean = false): ControlState {
     HELP: defaultValue,
     RESET: defaultValue,
   };
-}
-
-function getMenuAction(selection: number | null): MenuActionId {
-  return selection === 1 ? "about" : "play";
 }
 
 function getSelectionForAction(action: MenuActionId): number | null {
@@ -67,13 +68,45 @@ function getSelectionForAction(action: MenuActionId): number | null {
 
 export class HelpSceneModule implements SceneModule {
   private selection: number | null = 0;
+  private primaryVariant: HelpPrimaryVariant = "play";
 
   onEnter(): void {
     this.selection = 0;
+    this.primaryVariant = "play";
   }
 
   getSelection(): number | null {
     return this.selection;
+  }
+
+  private syncPrimaryAction(model: FirmwareModel): void {
+    if (model.postGame) {
+      this.primaryVariant = "results";
+      return;
+    }
+
+    if (model.session && model.session.countedActions > 1) {
+      this.primaryVariant = "resume";
+      return;
+    }
+
+    this.primaryVariant = "play";
+  }
+
+  private getMenuAction(selection: number | null): MenuActionId {
+    return selection === 1 ? "about" : "play";
+  }
+
+  private getPrimarySprite(): Sprite {
+    switch (this.primaryVariant) {
+      case "resume":
+        return SPRITE_RESUME;
+      case "results":
+        return SPRITE_RESULT;
+      case "play":
+      default:
+        return SPIRTE_PLAY;
+    }
   }
 
   async dispatchAction(
@@ -117,7 +150,7 @@ export class HelpSceneModule implements SceneModule {
     }
 
     if (action === "ACTION5") {
-      await context.activateMenuAction(getMenuAction(this.selection));
+      await context.activateMenuAction(this.getMenuAction(this.selection));
     }
   }
 
@@ -144,6 +177,11 @@ export class HelpSceneModule implements SceneModule {
     clearFramebuffer(framebuffer, UI_COLORS.background);
     blitSprite(framebuffer, SPRITE_LOGO);
 
+    this.syncPrimaryAction(model);
+    const primarySprite = this.getPrimarySprite();
+    const primaryButtonX = Math.floor((128 - primarySprite.width) / 2);
+    const primaryHotspotId = this.primaryVariant;
+
     if (!(model.daily && model.session)) {
       drawText(framebuffer, 44, 125, "LOADING", UI_COLORS.textMuted, "large");
       return {
@@ -158,7 +196,7 @@ export class HelpSceneModule implements SceneModule {
       framebuffer,
       14,
       35,
-      `${model.daily.gameId.toUpperCase()}`,
+      `${model.daily.gameId.split("-")[0].toUpperCase()}`,
       UI_COLORS.text,
       "large",
     );
@@ -213,13 +251,13 @@ export class HelpSceneModule implements SceneModule {
     }
 
     hotspots.push({
-      id: "play",
+      id: primaryHotspotId,
       kind: "action",
       action: "play",
-      x: 35,
+      x: primaryButtonX - 2,
       y: 98,
-      width: SPIRTE_PLAY.width + 4,
-      height: SPIRTE_PLAY.height + 4,
+      width: primarySprite.width + 4,
+      height: primarySprite.height + 4,
     });
 
     hotspots.push({
@@ -244,14 +282,14 @@ export class HelpSceneModule implements SceneModule {
       }
     }
 
-    const selectedAction = getMenuAction(this.selection);
+    const selectedAction = this.getMenuAction(this.selection);
     const indicatorHotspot = hotspots.find(
       (hotspot) =>
         hotspot.kind === "action" && hotspot.action === selectedAction,
     );
 
-    blitSprite(framebuffer, SPIRTE_PLAY, 37, 100, {
-      [12]: indicatorHotspot?.id === "play" ? 14 : 4,
+    blitSprite(framebuffer, primarySprite, primaryButtonX, 100, {
+      [12]: indicatorHotspot?.id === primaryHotspotId ? 14 : 4,
     });
     drawText(
       framebuffer,

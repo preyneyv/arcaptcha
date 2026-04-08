@@ -1,4 +1,5 @@
 import type { ActionName } from "../../lib/api";
+import type { Framebuffer } from "../framebuffer";
 import type {
   FirmwareFrame,
   FirmwareModel,
@@ -34,4 +35,7 @@ export interface SceneModule {
     context: SceneContext,
   ): Promise<void>;
   render(model: FirmwareModel): FirmwareFrame;
+  beginLocalAnimation?(from: Framebuffer): void;
+  hasActiveLocalAnimation?(): boolean;
+  clearLocalAnimation?(): void;
 }

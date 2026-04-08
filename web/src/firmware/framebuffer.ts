@@ -1,5 +1,5 @@
 import { ARC_RGBA_PALETTE, UI_COLORS } from "./palette";
-import { Sprite } from "./sprites";
+import type { Sprite } from "./sprites";
 
 export const SCREEN_WIDTH = 128;
 export const SCREEN_HEIGHT = 140;
@@ -92,14 +92,15 @@ export function blitSprite(
   }
 
   for (let y = 0; y < rows; y += 1) {
-    const row = sprite.data[y] ?? [];
+    const spriteRowOffset = y * columns;
+    const framebufferRowOffset = (offsetY + y) * SCREEN_WIDTH + offsetX;
     for (let x = 0; x < columns; x += 1) {
-      const sourceColor = row[x];
+      const sourceColor = sprite.data[spriteRowOffset + x] ?? 0;
       const color = remap[sourceColor] ?? sourceColor;
       if (color === 0) {
         continue;
       }
-      framebuffer[(offsetY + y) * SCREEN_WIDTH + (offsetX + x)] = color;
+      framebuffer[framebufferRowOffset + x] = color;
     }
   }
 }

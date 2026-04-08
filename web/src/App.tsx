@@ -17,19 +17,18 @@ import {
 } from "./firmware/Firmware";
 import { WinSceneModule } from "./firmware/scenes";
 import {
-  fetchDailyPuzzle,
-  openPlaySession,
+  bootstrapDailySession,
+  keepAliveUnloadDailySession,
   sendAction,
-  validatePlaySession,
+  unloadDailySession,
   type ActionName,
 } from "./lib/api";
 import { getOrCreatePlayerId } from "./lib/storage";
 
 const FIRMWARE_API: FirmwareApi = {
-  fetchDailyPuzzle,
-  openPlaySession,
-  validatePlaySession,
+  bootstrapDailySession,
   sendAction,
+  unloadDailySession,
 };
 
 const KEY_TO_ACTION: Record<string, ActionName> = {
@@ -221,6 +220,17 @@ export default function App() {
     return () => {
       unsubscribeSnapshot();
       firmware.dispose();
+    };
+  }, [firmware]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      keepAliveUnloadDailySession(firmware.getActiveEditionDate());
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
     };
   }, [firmware]);
 

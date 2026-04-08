@@ -44,7 +44,7 @@ const DIR_TO_ACTION: Record<NonNullable<ConsoleDirection>, ActionName> = {
   right: "ACTION4",
 };
 
-const HOLD_REPEAT_INITIAL_DELAY_MS = 150;
+const HOLD_REPEAT_INITIAL_DELAY_MS = 250;
 const HOLD_REPEAT_INTERVAL_MS = 90;
 
 function useHoldRepeater(onRepeat: () => void): {
