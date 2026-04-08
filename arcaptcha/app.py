@@ -18,7 +18,7 @@ from daily_runtime import (
 )
 from edition import EditionDateValidationError, resolve_edition_date
 from environment_sync import EnvironmentSyncError, EnvironmentSyncService
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, redirect, request
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,9 +61,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
     sync_service.refresh_local_index()
 
     if not config.catalog_path.exists():
-        raise RuntimeError(
-            f"catalog not found: {config.catalog_path}"
-        )
+        raise RuntimeError(f"catalog not found: {config.catalog_path}")
 
     catalog = GameCatalog.load(config.catalog_path)
     runtime_manager = DailyRuntimeManager(
@@ -290,41 +288,6 @@ def _register_api_routes(
 
 
 def _register_frontend_routes(app: Flask, config: AppConfig) -> None:
-    dist_dir = config.frontend_dist_dir.resolve()
-
     @app.get("/")
-    def frontend_index() -> Response | tuple[str, int, dict[str, str]]:
-        return _serve_frontend(dist_dir, config, None)
-
-    @app.get("/<path:path>")
-    def frontend_assets(path: str) -> Response | tuple[str, int, dict[str, str]]:
-        if path.startswith("api/"):
-            return "Not found", 404, {"Content-Type": "text/plain; charset=utf-8"}
-        return _serve_frontend(dist_dir, config, path)
-
-
-def _serve_frontend(
-    dist_dir: Path,
-    config: AppConfig,
-    path: str | None,
-) -> Response | tuple[str, int, dict[str, str]]:
-    index_file = dist_dir / "index.html"
-    if not index_file.exists():
-        message = [
-            "<html><body style='font-family: Consolas, monospace; padding: 24px;'>",
-            "<h1>Arcaptcha frontend is not built yet.</h1>",
-            "<p>Run <code>npm install</code> and <code>npm run dev</code> in <code>web</code> for local development.</p>",
-        ]
-        if config.frontend_dev_url:
-            message.append(
-                f"<p>Configured dev URL: <a href='{config.frontend_dev_url}'>{config.frontend_dev_url}</a></p>"
-            )
-        message.append("</body></html>")
-        return "".join(message), 503, {"Content-Type": "text/html; charset=utf-8"}
-
-    if path:
-        candidate = (dist_dir / path).resolve()
-        if candidate.is_file() and dist_dir in candidate.parents:
-            return send_from_directory(dist_dir, path)
-
-    return send_from_directory(dist_dir, "index.html")
+    def frontend_index():
+        return redirect("https://arcaptcha.io", code=307)
