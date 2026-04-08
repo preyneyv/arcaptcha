@@ -1,5 +1,11 @@
 import clsx from "clsx";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import bezel from "../assets/ui/bezel.svg";
 import buttonBase from "../assets/ui/button.svg";
 import buttonDiamond from "../assets/ui/button_diamond.svg";
@@ -538,8 +544,32 @@ export function Console({
   const helpIsPressed = helpPressed || pressedState.help;
   const resetIsPressed = resetPressed || pressedState.reset;
 
+  const consoleRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    // this is only needed for browsers that don't support mixed unit atan2.
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1802744
+    if (CSS.supports("transform", "scale(tan(atan2(1vh, 1px)))")) return;
+
+    const updateScale = () => {
+      if (!consoleRef.current) {
+        return;
+      }
+      const scale = Math.max(
+        1,
+        Math.floor(Math.min(window.innerHeight / 345, window.innerWidth / 200)),
+      );
+      consoleRef.current.style.transform = `translate(-50%, -50%) scale(${scale})`;
+    };
+    updateScale();
+    window.addEventListener("resize", updateScale);
+    return () => {
+      window.removeEventListener("resize", updateScale);
+    };
+  }, []);
+
   return (
-    <div className="console-chin">
+    <div className="console-chin" ref={consoleRef}>
       <main className="console">
         <div className="console-content">
           <ConsoleScreen

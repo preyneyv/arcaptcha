@@ -60,7 +60,12 @@ body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%)
-    scale(max(1, round(down, min(calc(100vh / 345px), calc(100vw / 200px)))));
+    scale(
+      max(
+        1,
+        round(down, min(tan(atan2(100vh, 345px)), tan(atan2(100vw, 200px))))
+      )
+    );
   z-index: 3;
 }
 
