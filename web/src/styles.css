@@ -90,7 +90,7 @@ body {
   padding: 8px;
 }
 
-@media (max-width: 400px) {
+@media (max-width: 450px) {
   .conway-background {
     display: none;
   }
