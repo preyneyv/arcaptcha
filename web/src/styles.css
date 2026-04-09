@@ -62,7 +62,7 @@ body {
   transform: translate(-50%, -50%)
     scale(
       max(
-        1,
+        2,
         round(down, min(tan(atan2(100vh, 345px)), tan(atan2(100vw, 200px))))
       )
     );
@@ -91,7 +91,7 @@ body {
 }
 
 @media (max-width: 450px) {
-  .conway-background {
+  /* .conway-background {
     display: none;
   }
   .console-chin {
@@ -99,9 +99,7 @@ body {
     left: 0;
     width: 50%;
     height: 100%;
-    /* padding: 0; */
     transform: translate(0, 0) scale(2);
-    /* transform: translate(0, 0); */
     transform-origin: left center;
     padding-bottom: 0;
     border-radius: 0 !important;
@@ -121,7 +119,6 @@ body {
     padding: 8px;
     box-sizing: border-box;
     border-radius: 0;
-    /* transform: scale(2); */
     height: 100%;
     width: 100%;
     transform-origin: center center;
@@ -133,7 +130,7 @@ body {
 
   .console-ui {
     width: 100%;
-  }
+  } */
 }
 
 .console-screen {
