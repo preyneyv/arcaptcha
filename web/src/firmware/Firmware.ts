@@ -19,6 +19,7 @@ import {
 } from "./framebuffer";
 import {
   GameEnvironment,
+  isFailureStateValue,
   isPostGameSession,
   isWinStateValue,
   type RuntimeSession,
@@ -276,8 +277,11 @@ function toPostGameStats(
 
   const winLevels = Math.max(1, session.winLevels);
   const reachedWinGoal = session.levelsCompleted >= winLevels;
-  const outcome: PostGameOutcome =
-    isWinStateValue(session.state) || reachedWinGoal ? "win" : "fail";
+  const outcome: PostGameOutcome = isFailureStateValue(session.state)
+    ? "fail"
+    : isWinStateValue(session.state) || reachedWinGoal
+      ? "win"
+      : "fail";
   const levelsCompleted = Math.max(
     0,
     Math.min(session.levelsCompleted, winLevels),
