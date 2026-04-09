@@ -253,14 +253,14 @@ function buildPostGameShareText(
     neutral: "⬛",
   };
 
-  const dayLabel = daily?.gameId || "Unknown";
+  const dayLabel = daily?.date || "Unknown";
   const levels =
     stats.levelMetrics.length > 0
       ? stats.levelMetrics.map((entry) => glyphByBand[entry.band]).join("")
       : glyphByBand.neutral;
 
   return [
-    `ARCaptcha #${dayLabel} ⚡ ${stats.countedActions} moves`,
+    `ARCaptcha ${dayLabel} ⚡ ${stats.countedActions} moves`,
     levels,
     "https://arcaptcha.io",
   ].join("\n");
