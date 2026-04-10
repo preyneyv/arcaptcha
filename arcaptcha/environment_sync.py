@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ from arc_agi import EnvironmentInfo
 from catalog import normalize_game_id
 
 LOGGER = logging.getLogger(__name__)
+ANON_API_KEY_TTL = timedelta(minutes=30)
 
 
 class EnvironmentSyncError(RuntimeError):
@@ -53,6 +54,7 @@ class EnvironmentSyncService:
         self.logger = logger or LOGGER
 
         self._api_key = arc_api_key.strip()
+        self._api_key_expires_at: datetime | None = None
         self._api_key_lock = threading.Lock()
         self._index_lock = threading.Lock()
         self._download_lock = threading.Lock()
@@ -71,7 +73,9 @@ class EnvironmentSyncService:
                     )
                     environment.local_dir = str(metadata_file.parent)
                     environments.append(environment)
-                except Exception as error:  # pragma: no cover - defensive parse fallback
+                except (
+                    Exception
+                ) as error:  # pragma: no cover - defensive parse fallback
                     self.logger.warning(
                         "failed to load metadata from %s: %s",
                         metadata_file,
@@ -86,9 +90,7 @@ class EnvironmentSyncService:
 
         index: dict[str, tuple[EnvironmentInfo, ...]] = {}
         for game_id, versions in grouped.items():
-            index[game_id] = tuple(
-                sorted(versions, key=_sort_key, reverse=True)
-            )
+            index[game_id] = tuple(sorted(versions, key=_sort_key, reverse=True))
 
         ordered = tuple(sorted(environments, key=_sort_key, reverse=True))
         with self._index_lock:
@@ -253,12 +255,21 @@ class EnvironmentSyncService:
         response.raise_for_status()
         return response.text
 
+    def _has_valid_api_key(self) -> bool:
+        if not self._api_key:
+            return False
+
+        if self._api_key_expires_at is None:
+            return True
+
+        return datetime.now(timezone.utc) < self._api_key_expires_at
+
     def _get_api_key(self) -> str:
-        if self._api_key:
+        if self._has_valid_api_key():
             return self._api_key
 
         with self._api_key_lock:
-            if self._api_key:
+            if self._has_valid_api_key():
                 return self._api_key
 
             response = requests.get(
@@ -270,8 +281,14 @@ class EnvironmentSyncService:
             payload = response.json()
             api_key = str(payload.get("api_key") or "")
             if not api_key:
-                raise MissingEnvironmentError("ARC anon key endpoint returned no api_key")
+                raise MissingEnvironmentError(
+                    "ARC anon key endpoint returned no api_key"
+                )
 
             self._api_key = api_key
-            self.logger.info("fetched anonymous ARC API key for environment sync")
+            self._api_key_expires_at = datetime.now(timezone.utc) + ANON_API_KEY_TTL
+            self.logger.info(
+                "fetched anonymous ARC API key for environment sync (expires at %s)",
+                self._api_key_expires_at.isoformat(),
+            )
             return self._api_key
